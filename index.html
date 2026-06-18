@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Badetemperatur — Dulpen</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  </head>
+  <body>
+    <header class="header">
+      <div class="title">
+        <h1>Dulpen</h1>
+        <p class="subtitle">Badeplass • Holmestrand</p>
+      </div>
+      <div class="current">
+        <span class="temp" id="current-temp">–</span>
+        <span class="as-of" id="current-asof"></span>
+      </div>
+    </header>
+
+    <nav class="ranges" id="ranges">
+      <button data-range="24h">24h</button>
+      <button data-range="7d">7d</button>
+      <button data-range="30d" class="active">30d</button>
+      <button data-range="all">All</button>
+    </nav>
+
+    <main>
+      <div id="chart" class="chart"></div>
+      <p class="empty" id="empty" hidden>
+        No readings recorded yet. Check back after the first hourly poll.
+      </p>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
