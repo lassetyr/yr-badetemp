@@ -2,7 +2,9 @@ name: Poll water temperature
 
 on:
   schedule:
-    - cron: "*/20 * * * *" # every 20 minutes (UTC)
+    # Offset off :00/:20/:40 — those minutes are the most congested on
+    # GitHub's shared scheduler and scheduled runs there get dropped most often.
+    - cron: "7,27,47 * * * *" # every 20 minutes, off-peak (UTC)
   workflow_dispatch:
 
 permissions:
