@@ -51,7 +51,17 @@ function buildOption(readings) {
         return `${header}<br>${rows}`;
       },
     },
-    legend: { data: ["Vann", "Luft", "Vind"], top: 0, right: 8, selected: legendSelected },
+    legend: {
+      data: ["Vann", "Luft", "Vind"],
+      top: 0,
+      // Centered so it clears both axis-name corners ("°C" left, "m/s" right).
+      left: "center",
+      selected: legendSelected,
+      // Default legend text (#333) is invisible on the dark panel; use the
+      // theme's light text for active items and muted gray for toggled-off ones.
+      textStyle: { color: "#e2e8f0", fontSize: 13 },
+      inactiveColor: "#64748b",
+    },
     xAxis: {
       type: "category",
       data: readings.map((r) => r.time),
