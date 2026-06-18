@@ -7,6 +7,18 @@ let currentRange = "30d";
 
 const nowEpoch = () => Math.floor(Date.now() / 1000);
 
+// Format an ISO time string in Norwegian time (Europe/Oslo), independent of
+// the viewer's device timezone. Returns the requested date/time parts by name.
+function osloParts(isoTime, opts) {
+  return new Intl.DateTimeFormat("nb-NO", {
+    timeZone: "Europe/Oslo",
+    hourCycle: "h23",
+    ...opts,
+  })
+    .formatToParts(new Date(isoTime))
+    .reduce((acc, part) => ((acc[part.type] = part.value), acc), {});
+}
+
 function buildOption(readings) {
   return {
     grid: { left: 50, right: 50, top: 30, bottom: 40 },
@@ -17,9 +29,13 @@ function buildOption(readings) {
       data: readings.map((r) => r.time),
       axisLabel: {
         formatter: (value) => {
-          const d = new Date(value);
-          const pad = (n) => String(n).padStart(2, "0");
-          return `${d.getDate()}.${d.getMonth() + 1} ${pad(d.getHours())}:00`;
+          const p = osloParts(value, {
+            day: "numeric",
+            month: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          return `${p.day}.${p.month} ${p.hour}:${p.minute}`;
         },
       },
     },
@@ -90,8 +106,15 @@ function updateHeader() {
   if (allReadings.length === 0) return;
   const latest = allReadings[allReadings.length - 1];
   document.getElementById("current-temp").textContent = `${latest.water}°C`;
+  const p = osloParts(latest.time, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   document.getElementById("current-asof").textContent =
-    `oppdatert ${new Date(latest.time).toLocaleString("nb-NO")}`;
+    `oppdatert ${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
 }
 
 function wireButtons() {
