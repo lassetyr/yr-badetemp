@@ -5,6 +5,18 @@ const chart = echarts.init(document.getElementById("chart"));
 let allReadings = [];
 let currentRange = "30d";
 
+// Which chart series are toggled on/off in the legend, persisted across reloads.
+const LEGEND_KEY = "yr-badetemp:legend";
+let legendSelected = loadLegendSelected();
+
+function loadLegendSelected() {
+  try {
+    return JSON.parse(localStorage.getItem(LEGEND_KEY)) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const nowEpoch = () => Math.floor(Date.now() / 1000);
 
 // Format an ISO time string in Norwegian time (Europe/Oslo), independent of
@@ -39,7 +51,7 @@ function buildOption(readings) {
         return `${header}<br>${rows}`;
       },
     },
-    legend: { data: ["Vann", "Luft", "Vind"], top: 0, right: 8 },
+    legend: { data: ["Vann", "Luft", "Vind"], top: 0, right: 8, selected: legendSelected },
     xAxis: {
       type: "category",
       data: readings.map((r) => r.time),
@@ -146,6 +158,16 @@ function wireButtons() {
 }
 
 window.addEventListener("resize", () => chart.resize());
+
+// Persist legend on/off state so a toggled-off series stays off after reload.
+chart.on("legendselectchanged", (params) => {
+  legendSelected = params.selected;
+  try {
+    localStorage.setItem(LEGEND_KEY, JSON.stringify(params.selected));
+  } catch {
+    // ignore storage failures (private mode, quota)
+  }
+});
 
 async function init() {
   wireButtons();
