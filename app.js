@@ -22,7 +22,23 @@ function osloParts(isoTime, opts) {
 function buildOption(readings) {
   return {
     grid: { left: 50, right: 50, top: 30, bottom: 40 },
-    tooltip: { trigger: "axis" },
+    tooltip: {
+      trigger: "axis",
+      formatter: (params) => {
+        const p = osloParts(params[0].axisValue, {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        const header = `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
+        const rows = params
+          .map((s) => `${s.marker}${s.seriesName}: <b>${s.value ?? "–"}</b>`)
+          .join("<br>");
+        return `${header}<br>${rows}`;
+      },
+    },
     legend: { data: ["Vann", "Luft", "Vind"], top: 0, right: 8 },
     xAxis: {
       type: "category",
