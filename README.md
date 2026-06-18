@@ -1,15 +1,42 @@
 # yr-badetemp — Water Temperature Tracker
 
-Records the water temperature at **Dulpen, Holmestrand** every 30 minutes from the
+Records the water temperature at **Dulpen, Holmestrand** every 20 minutes from the
 [yr.no](https://www.yr.no) water-temperatures API and shows the history in an
 interactive chart. No server, no database — GitHub Actions polls, the repo
 stores the data, GitHub Pages serves the chart.
 
 ## How it works
 
-- `.github/workflows/poll.yml` runs every 30 minutes, executes `scripts/poll.js`,
+- `.github/workflows/poll.yml` runs every 20 minutes, executes `scripts/poll.js`,
   and commits a new line to `data/dulpen.ndjson` when the source reading is newer.
 - `index.html` + `app.js` fetch that file and render it with ECharts.
+
+## Reliable scheduling
+
+GitHub's `schedule:` cron is best-effort — it is frequently delayed and often
+drops runs entirely, especially at sub-hourly cadence. For dependable polling,
+keep the cron as a fallback but drive the workflow from an **external scheduler**
+that calls GitHub's `workflow_dispatch` REST endpoint:
+
+1. **Create a token.** GitHub → Settings → Developer settings →
+   **Fine-grained personal access tokens** → Generate. Scope it to this repo
+   only, with **Repository permissions → Actions: Read and write**. Set an
+   expiry and save the token.
+2. **Test it** (locally, keep the token out of shared shells/history):
+   ```bash
+   GITHUB_TOKEN=<token> ./scripts/trigger.sh   # expect: HTTP 204
+   ```
+3. **Point a scheduler at it.** On [cron-job.org](https://cron-job.org) (free)
+   create a job with:
+   - URL: `https://api.github.com/repos/lassetyr/yr-badetemp/actions/workflows/poll.yml/dispatches`
+   - Method: `POST`
+   - Headers: `Accept: application/vnd.github+json`,
+     `Authorization: Bearer <token>`, `X-GitHub-Api-Version: 2022-11-28`
+   - Body: `{"ref":"main"}`
+   - Schedule: every 20 minutes
+
+   `scripts/trigger.sh` documents the exact same request and doubles as a manual
+   "poll now" trigger.
 
 ## Local development
 
