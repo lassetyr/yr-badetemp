@@ -11,7 +11,7 @@ function buildOption(readings) {
   return {
     grid: { left: 50, right: 50, top: 30, bottom: 40 },
     tooltip: { trigger: "axis" },
-    legend: { data: ["Water", "Air", "Wind"], top: 0, right: 8 },
+    legend: { data: ["Vann", "Luft", "Vind"], top: 0, right: 8 },
     xAxis: {
       type: "category",
       data: readings.map((r) => r.time),
@@ -35,7 +35,7 @@ function buildOption(readings) {
     ],
     series: [
       {
-        name: "Water",
+        name: "Vann",
         type: "line",
         smooth: true,
         showSymbol: false,
@@ -51,7 +51,7 @@ function buildOption(readings) {
         },
       },
       {
-        name: "Air",
+        name: "Luft",
         type: "line",
         smooth: true,
         showSymbol: false,
@@ -61,7 +61,7 @@ function buildOption(readings) {
         itemStyle: { color: "#f59e0b" },
       },
       {
-        name: "Wind",
+        name: "Vind",
         type: "line",
         smooth: true,
         showSymbol: false,
@@ -91,7 +91,7 @@ function updateHeader() {
   const latest = allReadings[allReadings.length - 1];
   document.getElementById("current-temp").textContent = `${latest.water}°C`;
   document.getElementById("current-asof").textContent =
-    `as of ${new Date(latest.time).toLocaleString()}`;
+    `oppdatert ${new Date(latest.time).toLocaleString("nb-NO")}`;
 }
 
 function wireButtons() {
