@@ -1,14 +1,14 @@
 # yr-badetemp — Water Temperature Tracker
 
-Hourly records the water temperature at **Dulpen, Holmestrand** from the
+Records the water temperature at **Dulpen, Holmestrand** every 30 minutes from the
 [yr.no](https://www.yr.no) water-temperatures API and shows the history in an
 interactive chart. No server, no database — GitHub Actions polls, the repo
 stores the data, GitHub Pages serves the chart.
 
 ## How it works
 
-- `.github/workflows/poll.yml` runs hourly, executes `scripts/poll.js`, and
-  commits a new line to `data/dulpen.ndjson` when the source reading is newer.
+- `.github/workflows/poll.yml` runs every 30 minutes, executes `scripts/poll.js`,
+  and commits a new line to `data/dulpen.ndjson` when the source reading is newer.
 - `index.html` + `app.js` fetch that file and render it with ECharts.
 
 ## Local development

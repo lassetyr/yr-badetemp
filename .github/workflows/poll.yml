@@ -2,7 +2,7 @@ name: Poll water temperature
 
 on:
   schedule:
-    - cron: "0 * * * *" # hourly, on the hour (UTC)
+    - cron: "0,30 * * * *" # every 30 minutes (UTC)
   workflow_dispatch:
 
 permissions:
