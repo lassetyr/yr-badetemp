@@ -3,8 +3,8 @@ import { parseNdjson, filterByRange } from "./src/data.js";
 const DATA_URL = "data/dulpen.ndjson";
 const REFRESH_MS = 5 * 60 * 1000;
 const chart = echarts.init(document.getElementById("chart"));
+const RANGES = ["24h", "7d", "30d", "all"];
 let allReadings = [];
-let currentRange = "30d";
 let refreshTimerId = null;
 
 // Which chart series are toggled on/off in the legend, persisted across reloads.
@@ -16,6 +16,19 @@ function loadLegendSelected() {
     return JSON.parse(localStorage.getItem(LEGEND_KEY)) || undefined;
   } catch {
     return undefined;
+  }
+}
+
+// Which time range is selected, persisted across reloads.
+const RANGE_KEY = "yr-badetemp:range";
+let currentRange = loadRange();
+
+function loadRange() {
+  try {
+    const stored = localStorage.getItem(RANGE_KEY);
+    return RANGES.includes(stored) ? stored : "30d";
+  } catch {
+    return "30d";
   }
 }
 
@@ -162,11 +175,23 @@ function wireButtons() {
     const btn = e.target.closest("button[data-range]");
     if (!btn) return;
     currentRange = btn.dataset.range;
-    document
-      .querySelectorAll("#ranges button")
-      .forEach((b) => b.classList.toggle("active", b === btn));
+    try {
+      localStorage.setItem(RANGE_KEY, currentRange);
+    } catch {
+      // ignore storage failures (private mode, quota)
+    }
+    syncRangeButtons();
     render();
   });
+  syncRangeButtons();
+}
+
+// Mark the button matching the persisted range as active (the HTML defaults to
+// 30d, which may differ from what was restored from storage).
+function syncRangeButtons() {
+  document
+    .querySelectorAll("#ranges button")
+    .forEach((b) => b.classList.toggle("active", b.dataset.range === currentRange));
 }
 
 window.addEventListener("resize", () => chart.resize());
