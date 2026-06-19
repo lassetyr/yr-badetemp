@@ -1,9 +1,11 @@
 import { parseNdjson, filterByRange } from "./src/data.js";
 
 const DATA_URL = "data/dulpen.ndjson";
+const REFRESH_MS = 5 * 60 * 1000;
 const chart = echarts.init(document.getElementById("chart"));
 let allReadings = [];
 let currentRange = "30d";
+let refreshTimerId = null;
 
 // Which chart series are toggled on/off in the legend, persisted across reloads.
 const LEGEND_KEY = "yr-badetemp:legend";
@@ -179,16 +181,50 @@ chart.on("legendselectchanged", (params) => {
   }
 });
 
-async function init() {
-  wireButtons();
+// Re-fetch the data file and re-render. On failure, leave the existing
+// readings and chart intact — a transient network blip must not blank a
+// working chart. Returns true when fresh data was applied.
+async function loadData() {
   try {
     const res = await fetch(DATA_URL, { cache: "no-store" });
-    allReadings = res.ok ? parseNdjson(await res.text()) : [];
+    if (!res.ok) return false;
+    allReadings = parseNdjson(await res.text());
   } catch {
-    allReadings = [];
+    return false;
   }
   updateHeader();
   render();
+  return true;
+}
+
+function startRefreshTimer() {
+  if (refreshTimerId !== null) return;
+  refreshTimerId = setInterval(loadData, REFRESH_MS);
+}
+
+function stopRefreshTimer() {
+  if (refreshTimerId === null) return;
+  clearInterval(refreshTimerId);
+  refreshTimerId = null;
+}
+
+// Pause polling while the tab is hidden; on return, refetch immediately and
+// resume the timer.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopRefreshTimer();
+  } else {
+    loadData();
+    startRefreshTimer();
+  }
+});
+
+async function init() {
+  wireButtons();
+  const ok = await loadData();
+  // First load with no data: show the empty state explicitly.
+  if (!ok) render();
+  startRefreshTimer();
 }
 
 init();
