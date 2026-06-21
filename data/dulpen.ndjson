@@ -261,3 +261,4 @@
 {"time":"2026-06-21T21:10:53+02:00","epoch":1782069053,"water":19.4,"air":22,"windSpeed":3.6,"windGust":7.1,"windDir":309}
 {"time":"2026-06-21T21:20:55+02:00","epoch":1782069655,"water":19.3,"air":20.4,"windSpeed":3.2,"windGust":5.7,"windDir":318}
 {"time":"2026-06-21T21:40:55+02:00","epoch":1782070855,"water":19.3,"air":20.4,"windSpeed":3.2,"windGust":5.7,"windDir":318}
+{"time":"2026-06-21T21:50:55+02:00","epoch":1782071455,"water":19.3,"air":20.3,"windSpeed":3.2,"windGust":5.7,"windDir":318}
