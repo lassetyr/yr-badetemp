@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractReading, toRow } from "../scripts/lib.js";
+import {
+  extractReading,
+  toRow,
+  extractOfficialWater,
+  extractForecast,
+  buildRow,
+} from "../scripts/lib.js";
 
 const SAMPLE = {
   type: "FeatureCollection",
@@ -98,4 +104,36 @@ test("toRow preserves null optional fields", () => {
   assert.equal(row.wind_speed, null);
   assert.equal(row.wind_gust, null);
   assert.equal(row.wind_dir, null);
+});
+
+const OFFICIAL_WATER = [
+  { temperature: 16, time: "2022-06-14T10:17:54+02:00" },
+  { temperature: 19, time: "2021-08-13T06:17:52+02:00" },
+  { temperature: 11, time: "2021-10-19T06:17:54+02:00" },
+];
+
+test("extractOfficialWater returns the newest reading regardless of array order", () => {
+  assert.deepEqual(extractOfficialWater(OFFICIAL_WATER), {
+    temperature: 16,
+    time: "2022-06-14T10:17:54+02:00",
+    epoch: Math.floor(Date.parse("2022-06-14T10:17:54+02:00") / 1000),
+  });
+});
+
+test("extractOfficialWater skips entries with non-numeric temperature", () => {
+  const r = extractOfficialWater([
+    { temperature: null, time: "2022-06-14T10:17:54+02:00" },
+    { temperature: 12, time: "2022-06-13T10:17:54+02:00" },
+  ]);
+  assert.equal(r.temperature, 12);
+});
+
+test("extractOfficialWater returns null for empty array, non-array, and unparseable times", () => {
+  assert.equal(extractOfficialWater([]), null);
+  assert.equal(extractOfficialWater(null), null);
+  assert.equal(extractOfficialWater({}), null);
+  assert.equal(
+    extractOfficialWater([{ temperature: 12, time: "not-a-date" }]),
+    null,
+  );
 });

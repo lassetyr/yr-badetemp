@@ -22,6 +22,34 @@ export function extractReading(geojson, locationId) {
   };
 }
 
+// Find the newest official water reading in the array and return a canonical
+// shape, or null if empty/malformed. The official API returns up to 5 entries
+// of { temperature, time }, newest-first, but we pick by time rather than trust
+// the order.
+export function extractOfficialWater(json) {
+  if (!Array.isArray(json)) return null;
+  let best = null;
+  for (const entry of json) {
+    if (typeof entry?.temperature !== "number") continue;
+    const epoch = Math.floor(Date.parse(entry.time) / 1000);
+    if (!Number.isFinite(epoch)) continue;
+    if (!best || epoch > best.epoch) {
+      best = { temperature: entry.temperature, time: entry.time, epoch };
+    }
+  }
+  return best;
+}
+
+// Placeholder — implemented in a later task.
+export function extractForecast() {
+  return null;
+}
+
+// Placeholder — implemented in a later task.
+export function buildRow() {
+  return null;
+}
+
 // Map a reading to the snake_case row payload for the readings table.
 export function toRow(reading, locationId) {
   return {
