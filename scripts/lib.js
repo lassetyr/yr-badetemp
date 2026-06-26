@@ -22,30 +22,16 @@ export function extractReading(geojson, locationId) {
   };
 }
 
-// Return the last reading from ndjson text, or null if there are no lines.
-export function parseLastReading(text) {
-  if (!text) return null;
-  const lines = text.trim().split("\n").filter(Boolean);
-  if (lines.length === 0) return null;
-  return JSON.parse(lines[lines.length - 1]);
-}
-
-// Append only when the fetched reading is strictly newer than the stored one.
-export function shouldAppend(lastReading, reading) {
-  if (!reading) return false;
-  if (!lastReading) return true;
-  return reading.epoch > lastReading.epoch;
-}
-
-// Serialize a reading to a single ndjson line (no trailing newline).
-export function formatLine(reading) {
-  return JSON.stringify({
-    time: reading.time,
+// Map a reading to the snake_case row payload for the readings table.
+export function toRow(reading, locationId) {
+  return {
+    location_id: locationId,
     epoch: reading.epoch,
+    time: reading.time,
     water: reading.water,
     air: reading.air,
-    windSpeed: reading.windSpeed,
-    windGust: reading.windGust,
-    windDir: reading.windDir,
-  });
+    wind_speed: reading.windSpeed,
+    wind_gust: reading.windGust,
+    wind_dir: reading.windDir,
+  };
 }
