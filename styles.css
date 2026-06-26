@@ -63,3 +63,10 @@ body {
 }
 
 .empty { color: var(--muted); text-align: center; padding: 40px; }
+
+.credits {
+  margin: 1.5rem 0 0.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
