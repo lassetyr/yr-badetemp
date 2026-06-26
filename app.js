@@ -1,6 +1,7 @@
-import { parseNdjson, filterByRange } from "./src/data.js";
+import { readingsQueryUrl, mapRow } from "./src/data.js";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./src/config.js";
 
-const DATA_URL = "data/dulpen.ndjson";
+const LOCATION_ID = "0-10238"; // Dulpen, Holmestrand
 const REFRESH_MS = 5 * 60 * 1000;
 const chart = echarts.init(document.getElementById("chart"));
 const RANGES = ["24h", "7d", "30d", "all"];
@@ -144,15 +145,14 @@ function buildOption(readings) {
 }
 
 function render() {
-  const readings = filterByRange(allReadings, currentRange, nowEpoch());
   const empty = document.getElementById("empty");
-  if (readings.length === 0) {
+  if (allReadings.length === 0) {
     empty.hidden = false;
     chart.clear();
     return;
   }
   empty.hidden = true;
-  chart.setOption(buildOption(readings), true);
+  chart.setOption(buildOption(allReadings), true);
 }
 
 function updateHeader() {
@@ -181,7 +181,7 @@ function wireButtons() {
       // ignore storage failures (private mode, quota)
     }
     syncRangeButtons();
-    render();
+    loadData();
   });
   syncRangeButtons();
 }
@@ -206,14 +206,22 @@ chart.on("legendselectchanged", (params) => {
   }
 });
 
-// Re-fetch the data file and re-render. On failure, leave the existing
-// readings and chart intact — a transient network blip must not blank a
-// working chart. Returns true when fresh data was applied.
+// Fetch the current range from Supabase and re-render. On failure, leave the
+// existing readings and chart intact — a transient network blip must not blank
+// a working chart. Returns true when fresh data was applied.
 async function loadData() {
+  const url = readingsQueryUrl(SUPABASE_URL, LOCATION_ID, currentRange, nowEpoch());
   try {
-    const res = await fetch(DATA_URL, { cache: "no-store" });
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: {
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+      },
+    });
     if (!res.ok) return false;
-    allReadings = parseNdjson(await res.text());
+    const rows = await res.json();
+    allReadings = rows.map(mapRow);
   } catch {
     return false;
   }
