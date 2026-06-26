@@ -1,11 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  extractReading,
-  parseLastReading,
-  shouldAppend,
-  formatLine,
-} from "../scripts/lib.js";
+import { extractReading, toRow } from "../scripts/lib.js";
 
 const SAMPLE = {
   type: "FeatureCollection",
@@ -66,33 +61,7 @@ test("extractReading returns null when geojson is malformed", () => {
   assert.equal(extractReading(null, "0-10238"), null);
 });
 
-test("parseLastReading returns null for empty text", () => {
-  assert.equal(parseLastReading(""), null);
-  assert.equal(parseLastReading("\n\n"), null);
-});
-
-test("parseLastReading returns the last line", () => {
-  const text =
-    '{"time":"a","epoch":1,"water":10,"air":null,"windSpeed":null,"windGust":null,"windDir":null}\n' +
-    '{"time":"b","epoch":2,"water":11,"air":null,"windSpeed":null,"windGust":null,"windDir":null}\n';
-  assert.equal(parseLastReading(text).epoch, 2);
-});
-
-test("shouldAppend is true when there is no prior reading", () => {
-  assert.equal(shouldAppend(null, { epoch: 5 }), true);
-});
-
-test("shouldAppend is true only when the new epoch is strictly newer", () => {
-  assert.equal(shouldAppend({ epoch: 5 }, { epoch: 6 }), true);
-  assert.equal(shouldAppend({ epoch: 5 }, { epoch: 5 }), false);
-  assert.equal(shouldAppend({ epoch: 5 }, { epoch: 4 }), false);
-});
-
-test("shouldAppend is false when there is no new reading", () => {
-  assert.equal(shouldAppend({ epoch: 5 }, null), false);
-});
-
-test("formatLine round-trips through parseLastReading", () => {
+test("toRow maps a reading to the snake_case row payload", () => {
   const reading = {
     time: "2026-06-18T18:38:27+02:00",
     epoch: 1781800707,
@@ -102,6 +71,31 @@ test("formatLine round-trips through parseLastReading", () => {
     windGust: 2.6,
     windDir: 78,
   };
-  assert.equal(formatLine(reading).includes("\n"), false);
-  assert.deepEqual(parseLastReading(formatLine(reading) + "\n"), reading);
+  assert.deepEqual(toRow(reading, "0-10238"), {
+    location_id: "0-10238",
+    epoch: 1781800707,
+    time: "2026-06-18T18:38:27+02:00",
+    water: 16.6,
+    air: 23.5,
+    wind_speed: 0.8,
+    wind_gust: 2.6,
+    wind_dir: 78,
+  });
+});
+
+test("toRow preserves null optional fields", () => {
+  const reading = {
+    time: "t",
+    epoch: 1,
+    water: 17.8,
+    air: null,
+    windSpeed: null,
+    windGust: null,
+    windDir: null,
+  };
+  const row = toRow(reading, "0-10060");
+  assert.equal(row.air, null);
+  assert.equal(row.wind_speed, null);
+  assert.equal(row.wind_gust, null);
+  assert.equal(row.wind_dir, null);
 });
