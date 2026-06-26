@@ -52,9 +52,20 @@ export function extractForecast(json) {
   };
 }
 
-// Placeholder — implemented in a later task.
-export function buildRow() {
-  return null;
+// Combine an official water reading with an optional forecast into the
+// snake_case readings row. forecast may be null when the weather fetch failed;
+// the air/wind columns are nullable and the chart tolerates gaps.
+export function buildRow(water, forecast, locationId) {
+  return {
+    location_id: locationId,
+    epoch: water.epoch,
+    time: water.time,
+    water: water.temperature,
+    air: forecast?.air ?? null,
+    wind_speed: forecast?.windSpeed ?? null,
+    wind_gust: forecast?.windGust ?? null,
+    wind_dir: forecast?.windDir ?? null,
+  };
 }
 
 // Map a reading to the snake_case row payload for the readings table.

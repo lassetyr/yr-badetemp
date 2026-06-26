@@ -196,3 +196,28 @@ test("extractForecast nulls individually missing fields", () => {
     windDir: null,
   });
 });
+
+test("buildRow combines water and forecast into a snake_case row", () => {
+  const water = { temperature: 16.6, time: "2026-06-18T18:38:27+02:00", epoch: 1781800707 };
+  const forecast = { air: 23.5, windSpeed: 0.8, windGust: 2.6, windDir: 78 };
+  assert.deepEqual(buildRow(water, forecast, "0-10238"), {
+    location_id: "0-10238",
+    epoch: 1781800707,
+    time: "2026-06-18T18:38:27+02:00",
+    water: 16.6,
+    air: 23.5,
+    wind_speed: 0.8,
+    wind_gust: 2.6,
+    wind_dir: 78,
+  });
+});
+
+test("buildRow nulls air/wind when forecast is null (weather fetch failed)", () => {
+  const water = { temperature: 16.6, time: "t", epoch: 1 };
+  const row = buildRow(water, null, "0-10238");
+  assert.equal(row.water, 16.6);
+  assert.equal(row.air, null);
+  assert.equal(row.wind_speed, null);
+  assert.equal(row.wind_gust, null);
+  assert.equal(row.wind_dir, null);
+});
