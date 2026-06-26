@@ -18,7 +18,7 @@ npm test                      # run all unit tests (node --test, Node 20+, zero 
 node --test test/lib.test.js  # run a single test file
 
 # Poller / import need Supabase credentials in the environment:
-SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/poll.js
+YR_API_KEY=<key> SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/poll.js
 SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/import-history.js  # one-off backfill from the ndjson
 
 python3 -m http.server 8000   # serve the site locally → http://localhost:8000/
@@ -35,10 +35,13 @@ read-only via RLS and is meant to ship in client code).
 Two halves share pure helpers but never import each other:
 
 - **Poller** (`scripts/poll.js` → `scripts/lib.js`): runs in CI/Node. `poll.js`
-  does all I/O (fetch yr.no, POST to Supabase); `lib.js` is pure (`extractReading`
-  pulls a reading from the yr.no GeoJSON, `toRow` maps it to the snake_case DB
-  row). Failures `return` rather than throw — the run exits 0 so a transient API
-  blip just waits for the next scheduled poll.
+  does all I/O — water temperature from the official `badetemperaturer.yr.no`
+  API (`apikey` header), air/wind from MET Norway Locationforecast 2.0
+  (`User-Agent` header), then POSTs one water-anchored row to Supabase. `lib.js`
+  is pure: `extractOfficialWater` picks the newest official water reading,
+  `extractForecast` pulls instant air/wind from the met.no response, `buildRow`
+  maps them to the snake_case DB row. Failures `return` rather than throw — the
+  run exits 0, and a met.no blip still yields a water-only row (air/wind null).
 - **Browser app** (`index.html` + `app.js` → `src/data.js` + `src/config.js`):
   fetches the selected time range from Supabase's PostgREST endpoint and renders
   with ECharts. `src/data.js` is pure (`readingsQueryUrl` builds the PostgREST
@@ -85,10 +88,12 @@ congested scheduler slots.
 
 ## Config knobs
 
-- Tracked spot: `LOCATION_ID = "0-10238"` and `API_URL` in `scripts/poll.js`
-  (`LOCATION_ID` is also set in `app.js` for the read query).
-- Supabase: `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` (env, for poller/import);
-  `SUPABASE_URL` + `SUPABASE_PUBLISHABLE_KEY` in `src/config.js` (frontend read).
+- Tracked spot: `STORAGE_ID` (written to `location_id`), `QUERY_ID` (sent to
+  badetemperaturer.yr.no), and `LAT`/`LON` in `scripts/poll.js`. `STORAGE_ID`
+  (`"0-10238"`) is also the read-query id in `app.js`. The water + forecast
+  endpoint URLs and `MET_USER_AGENT` are constants in `scripts/poll.js`.
+- Secrets: `YR_API_KEY` (official water API, GitHub Actions secret + local env),
+  plus the existing `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
 - Browser refresh cadence: `REFRESH_MS` in `app.js` (auto-refetches without page
   reload; pauses while the tab is hidden).
 - Poll cadence: the `cron` in `.github/workflows/poll.yml` and the external
