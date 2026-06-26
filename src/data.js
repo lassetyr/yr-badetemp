@@ -10,15 +10,28 @@ const COLUMNS = "time,epoch,water,air,wind_speed,wind_gust,wind_dir";
 
 // Build a PostgREST query URL for one location and time range. baseUrl is the
 // Supabase project URL with no trailing slash. Unknown/"all" ranges omit the
-// epoch lower bound (return the full history).
+// epoch lower bound (return the full history). Ordered newest-first
+// (epoch.desc) so that if a row cap is ever introduced it drops the OLDEST
+// rows, never the recent tail — callers reverse to oldest-first for display.
 export function readingsQueryUrl(baseUrl, locationId, rangeKey, nowEpoch) {
   const params = new URLSearchParams();
   params.set("select", COLUMNS);
   params.set("location_id", `eq.${locationId}`);
-  params.set("order", "epoch.asc");
+  params.set("order", "epoch.desc");
   if (rangeKey in RANGE_SECONDS) {
     params.set("epoch", `gte.${nowEpoch - RANGE_SECONDS[rangeKey]}`);
   }
+  return `${baseUrl}/rest/v1/readings?${params.toString()}`;
+}
+
+// Build a PostgREST query URL for the single most recent reading at a location,
+// independent of any selected time range — used for the always-current header.
+export function latestReadingUrl(baseUrl, locationId) {
+  const params = new URLSearchParams();
+  params.set("select", COLUMNS);
+  params.set("location_id", `eq.${locationId}`);
+  params.set("order", "epoch.desc");
+  params.set("limit", "1");
   return `${baseUrl}/rest/v1/readings?${params.toString()}`;
 }
 

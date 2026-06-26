@@ -1,4 +1,4 @@
-import { readingsQueryUrl, mapRow } from "./src/data.js";
+import { readingsQueryUrl, latestReadingUrl, mapRow } from "./src/data.js";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./src/config.js";
 
 const LOCATION_ID = "0-10238"; // Dulpen, Holmestrand
@@ -6,6 +6,7 @@ const REFRESH_MS = 5 * 60 * 1000;
 const chart = echarts.init(document.getElementById("chart"));
 const RANGES = ["24h", "7d", "30d", "all"];
 let allReadings = [];
+let latest = null;
 let refreshTimerId = null;
 
 // Which chart series are toggled on/off in the legend, persisted across reloads.
@@ -156,8 +157,7 @@ function render() {
 }
 
 function updateHeader() {
-  if (allReadings.length === 0) return;
-  const latest = allReadings[allReadings.length - 1];
+  if (!latest) return;
   document.getElementById("current-temp").textContent = `${latest.water}°C`;
   const p = osloParts(latest.time, {
     day: "2-digit",
@@ -171,17 +171,26 @@ function updateHeader() {
 }
 
 function wireButtons() {
-  document.getElementById("ranges").addEventListener("click", (e) => {
+  document.getElementById("ranges").addEventListener("click", async (e) => {
     const btn = e.target.closest("button[data-range]");
     if (!btn) return;
+    // Switch optimistically, then refetch. Only commit/persist the new range if
+    // the fetch succeeds; on failure revert so the active button matches the
+    // chart still on screen.
+    const prevRange = currentRange;
     currentRange = btn.dataset.range;
-    try {
-      localStorage.setItem(RANGE_KEY, currentRange);
-    } catch {
-      // ignore storage failures (private mode, quota)
-    }
     syncRangeButtons();
-    loadData();
+    const ok = await loadData();
+    if (ok) {
+      try {
+        localStorage.setItem(RANGE_KEY, currentRange);
+      } catch {
+        // ignore storage failures (private mode, quota)
+      }
+    } else {
+      currentRange = prevRange;
+      syncRangeButtons();
+    }
   });
   syncRangeButtons();
 }
@@ -206,33 +215,59 @@ chart.on("legendselectchanged", (params) => {
   }
 });
 
-// Fetch the current range from Supabase and re-render. On failure, leave the
-// existing readings and chart intact — a transient network blip must not blank
-// a working chart. Returns true when fresh data was applied.
+const SUPABASE_HEADERS = {
+  apikey: SUPABASE_PUBLISHABLE_KEY,
+  Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+};
+
+// Fetch the selected range from Supabase and re-render the chart. On failure,
+// leave the existing readings and chart intact — a transient network blip must
+// not blank a working chart. Returns true when fresh data was applied.
 async function loadData() {
   const url = readingsQueryUrl(SUPABASE_URL, LOCATION_ID, currentRange, nowEpoch());
   try {
-    const res = await fetch(url, {
-      cache: "no-store",
-      headers: {
-        apikey: SUPABASE_PUBLISHABLE_KEY,
-        Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
-      },
-    });
+    const res = await fetch(url, { cache: "no-store", headers: SUPABASE_HEADERS });
     if (!res.ok) return false;
     const rows = await res.json();
-    allReadings = rows.map(mapRow);
+    // Server returns newest-first (epoch.desc); reverse to oldest-first for the
+    // left-to-right time axis.
+    allReadings = rows.map(mapRow).reverse();
   } catch {
     return false;
   }
-  updateHeader();
   render();
   return true;
 }
 
+// Fetch the single most recent reading for the header, independent of the
+// selected range, so "current temp" stays correct even when the chosen window
+// happens to contain no readings. On failure, leave the existing header intact.
+async function loadLatest() {
+  try {
+    const res = await fetch(latestReadingUrl(SUPABASE_URL, LOCATION_ID), {
+      cache: "no-store",
+      headers: SUPABASE_HEADERS,
+    });
+    if (!res.ok) return false;
+    const rows = await res.json();
+    if (rows.length > 0) {
+      latest = mapRow(rows[0]);
+      updateHeader();
+    }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+// Refresh both the header (latest reading) and the chart (selected range).
+async function refresh() {
+  await Promise.all([loadLatest(), loadData()]);
+}
+
 function startRefreshTimer() {
   if (refreshTimerId !== null) return;
-  refreshTimerId = setInterval(loadData, REFRESH_MS);
+  refreshTimerId = setInterval(refresh, REFRESH_MS);
 }
 
 function stopRefreshTimer() {
@@ -247,14 +282,14 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopRefreshTimer();
   } else {
-    loadData();
+    refresh();
     startRefreshTimer();
   }
 });
 
 async function init() {
   wireButtons();
-  const ok = await loadData();
+  const [, ok] = await Promise.all([loadLatest(), loadData()]);
   // First load with no data: show the empty state explicitly.
   if (!ok) render();
   startRefreshTimer();
