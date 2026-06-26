@@ -40,9 +40,16 @@ export function extractOfficialWater(json) {
   return best;
 }
 
-// Placeholder — implemented in a later task.
-export function extractForecast() {
-  return null;
+// Pull instant air/wind from a met.no Locationforecast 2.0 response. Returns an
+// object with all-null fields if any part of the expected shape is missing.
+export function extractForecast(json) {
+  const details = json?.properties?.timeseries?.[0]?.data?.instant?.details;
+  return {
+    air: num(details?.air_temperature),
+    windSpeed: num(details?.wind_speed),
+    windGust: num(details?.wind_speed_of_gust),
+    windDir: num(details?.wind_from_direction),
+  };
 }
 
 // Placeholder — implemented in a later task.

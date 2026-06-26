@@ -137,3 +137,62 @@ test("extractOfficialWater returns null for empty array, non-array, and unparsea
     null,
   );
 });
+
+const FORECAST = {
+  properties: {
+    timeseries: [
+      {
+        data: {
+          instant: {
+            details: {
+              air_temperature: 23.5,
+              wind_speed: 0.8,
+              wind_speed_of_gust: 2.6,
+              wind_from_direction: 78,
+            },
+          },
+        },
+      },
+    ],
+  },
+};
+
+test("extractForecast maps met.no instant details to camelCase", () => {
+  assert.deepEqual(extractForecast(FORECAST), {
+    air: 23.5,
+    windSpeed: 0.8,
+    windGust: 2.6,
+    windDir: 78,
+  });
+});
+
+test("extractForecast returns all-null fields for a malformed shape", () => {
+  assert.deepEqual(extractForecast({}), {
+    air: null,
+    windSpeed: null,
+    windGust: null,
+    windDir: null,
+  });
+  assert.deepEqual(extractForecast(null), {
+    air: null,
+    windSpeed: null,
+    windGust: null,
+    windDir: null,
+  });
+});
+
+test("extractForecast nulls individually missing fields", () => {
+  const partial = {
+    properties: {
+      timeseries: [
+        { data: { instant: { details: { air_temperature: 18 } } } },
+      ],
+    },
+  };
+  assert.deepEqual(extractForecast(partial), {
+    air: 18,
+    windSpeed: null,
+    windGust: null,
+    windDir: null,
+  });
+});
