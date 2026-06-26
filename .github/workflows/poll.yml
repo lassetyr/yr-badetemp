@@ -7,9 +7,6 @@ on:
     - cron: "7,27,47 * * * *" # every 20 minutes, off-peak (UTC)
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 concurrency:
   group: poll
   cancel-in-progress: false
@@ -22,17 +19,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
-      - name: Fetch and append reading
+      - name: Fetch and insert reading
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: node scripts/poll.js
-      - name: Commit if changed
-        run: |
-          if [[ -n "$(git status --porcelain data/dulpen.ndjson)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add data/dulpen.ndjson
-            git commit -m "data: add reading $(date -u +%FT%TZ)"
-            git pull --rebase origin main
-            git push
-          else
-            echo "No changes to commit."
-          fi
