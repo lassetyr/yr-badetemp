@@ -21,6 +21,7 @@ jobs:
           node-version: "22"
       - name: Fetch and insert reading
         env:
+          YR_API_KEY: ${{ secrets.YR_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: node scripts/poll.js
