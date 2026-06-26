@@ -83,8 +83,10 @@ congested scheduler slots.
 - The poll workflow no longer commits to the repo — it just runs the inserting
   poll script. `concurrency.group: poll` still serializes overlapping runs, and
   the `(location_id, epoch)` PK makes a race harmless even if two overlap.
-- `LOCATION_ID` is currently only `"0-10238"` (Dulpen). The `location_id` column
-  exists as the seam for adding more spots later, but only Dulpen is written.
+- `STORAGE_ID` is currently only `"0-10238"` (Dulpen) — the id written to the
+  `location_id` column. That column exists as the seam for adding more spots
+  later, but only Dulpen is written. (`QUERY_ID`, sent to the Yr API, is
+  tracked separately in `scripts/poll.js`.)
 
 ## Config knobs
 
