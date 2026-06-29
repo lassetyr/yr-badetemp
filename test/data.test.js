@@ -346,6 +346,21 @@ test("waterTrend returns null with fewer than two usable readings", () => {
   );
 });
 
+test("waterTrend accepts a candidate exactly at the tolerance boundary (strict >)", () => {
+  // newest target is 24h before newest (epoch 1000); the candidate sits 6h off
+  // that target, i.e. exactly toleranceSec away — must be accepted, not rejected.
+  const t = waterTrend(
+    [
+      { epoch: 1000 + 6 * HOUR, water: 15.0 }, // 6h from the 24h-ago target
+      { epoch: 1000 + DAY, water: 16.0 },      // newest
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 1.0) < 1e-9);
+});
+
 test("waterTrend skips null-water candidates and picks the nearest usable one", () => {
   const t = waterTrend(
     [
