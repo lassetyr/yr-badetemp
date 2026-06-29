@@ -11,6 +11,7 @@ import {
   isStale,
   humanizeAge,
   degToCompass,
+  waterTrend,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -282,4 +283,79 @@ test("degToCompass returns null for missing/invalid input", () => {
   assert.equal(degToCompass(null), null);
   assert.equal(degToCompass(undefined), null);
   assert.equal(degToCompass(NaN), null);
+});
+
+const HOUR = 3600;
+const DAY = 24 * HOUR;
+
+test("waterTrend reports a warming delta vs ~24h ago", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 15.0 },        // ~24h before newest
+      { epoch: 1000 + DAY, water: 15.4 },  // newest
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 0.4) < 1e-9);
+});
+
+test("waterTrend reports a cooling delta", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 17.0 },
+      { epoch: 1000 + DAY, water: 16.0 },
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "down");
+  assert.ok(Math.abs(t.delta + 1.0) < 1e-9);
+});
+
+test("waterTrend is flat when the delta rounds to zero", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 16.02 },
+      { epoch: 1000 + DAY, water: 16.0 },
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "flat");
+});
+
+test("waterTrend returns null when no point is near the 24h-ago target", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 15.0 },          // 12h before newest, > 6h tolerance off the 24h target
+      { epoch: 1000 + 12 * HOUR, water: 16.0 }, // newest
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t, null);
+});
+
+test("waterTrend returns null with fewer than two usable readings", () => {
+  assert.equal(waterTrend([{ epoch: 1000, water: 15 }], DAY, 6 * HOUR), null);
+  assert.equal(
+    waterTrend([{ epoch: 1000, water: null }, { epoch: 1000 + DAY, water: 16 }], DAY, 6 * HOUR),
+    null,
+  );
+});
+
+test("waterTrend skips null-water candidates and picks the nearest usable one", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 14.0 },           // exactly 24h ago, usable
+      { epoch: 1000 + HOUR, water: null },    // closer to target but unusable
+      { epoch: 1000 + DAY, water: 15.0 },     // newest
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 1.0) < 1e-9);
 });

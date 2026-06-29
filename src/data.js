@@ -126,3 +126,28 @@ export function degToCompass(deg) {
   const normalized = ((deg % 360) + 360) % 360;
   return COMPASS_8[Math.round(normalized / 45) % 8];
 }
+
+// Trend of the newest water reading vs the reading nearest windowSec earlier.
+// Only readings with a non-null water value count. Returns null unless a
+// candidate exists within toleranceSec of the target time (so it won't compare
+// against a wildly-off point). direction is "flat" when the delta rounds to 0,0.
+export function waterTrend(readings, windowSec, toleranceSec) {
+  const usable = readings.filter((r) => r.water != null);
+  if (usable.length < 2) return null;
+  const newest = usable[usable.length - 1];
+  const targetEpoch = newest.epoch - windowSec;
+  let best = null;
+  let bestDiff = Infinity;
+  for (const r of usable) {
+    if (r === newest) continue;
+    const diff = Math.abs(r.epoch - targetEpoch);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = r;
+    }
+  }
+  if (best == null || bestDiff > toleranceSec) return null;
+  const delta = newest.water - best.water;
+  const direction = Math.abs(delta) < 0.05 ? "flat" : delta > 0 ? "up" : "down";
+  return { delta, direction };
+}
