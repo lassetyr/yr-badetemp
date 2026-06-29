@@ -117,3 +117,12 @@ export function humanizeAge(seconds) {
   if (hours < 24) return `${hours} t`;
   return `${Math.floor(seconds / 86400)} d`;
 }
+
+// 8-point Norwegian compass abbreviation for a bearing in degrees, or null when
+// the bearing is missing/non-finite. Rounds to the nearest 45° sector.
+const COMPASS_8 = ["N", "NØ", "Ø", "SØ", "S", "SV", "V", "NV"];
+export function degToCompass(deg) {
+  if (deg == null || !Number.isFinite(deg)) return null;
+  const normalized = ((deg % 360) + 360) % 360;
+  return COMPASS_8[Math.round(normalized / 45) % 8];
+}

@@ -10,6 +10,7 @@ import {
   waterStats,
   isStale,
   humanizeAge,
+  degToCompass,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -252,4 +253,33 @@ test("humanizeAge rolls into days at 24 hours", () => {
 test("humanizeAge guards negative/null input", () => {
   assert.equal(humanizeAge(-10), "0 min");
   assert.equal(humanizeAge(null), "0 min");
+});
+
+test("degToCompass maps each cardinal/intercardinal sector", () => {
+  assert.equal(degToCompass(0), "N");
+  assert.equal(degToCompass(45), "NØ");
+  assert.equal(degToCompass(90), "Ø");
+  assert.equal(degToCompass(135), "SØ");
+  assert.equal(degToCompass(180), "S");
+  assert.equal(degToCompass(225), "SV");
+  assert.equal(degToCompass(270), "V");
+  assert.equal(degToCompass(315), "NV");
+});
+
+test("degToCompass wraps around north", () => {
+  assert.equal(degToCompass(360), "N");
+  assert.equal(degToCompass(359), "N");
+  assert.equal(degToCompass(338), "N"); // 337.5 boundary rounds up to N
+});
+
+test("degToCompass rounds to the nearest sector", () => {
+  assert.equal(degToCompass(22.5), "NØ"); // boundary rounds up
+  assert.equal(degToCompass(60), "NØ");   // closer to 45 than 90
+  assert.equal(degToCompass(78), "Ø");    // closer to 90 than 45
+});
+
+test("degToCompass returns null for missing/invalid input", () => {
+  assert.equal(degToCompass(null), null);
+  assert.equal(degToCompass(undefined), null);
+  assert.equal(degToCompass(NaN), null);
 });
