@@ -35,8 +35,8 @@ matching the existing I/O-free seam.
 4. **dataZoom on all ranges** — inside (scroll/drag) + a dark slider, so any
    window can be zoomed/panned.
 5. **Richer tooltip** — every row shows its value with a Norwegian-comma number
-   and a unit (`°C` / `m/s`); the "Vind" row also gains gust and a direction
-   arrow, e.g. `Vind: 0,8 m/s (kast 2,6 ↙)` (`-` when the direction is unknown).
+   and a unit (`°C` / `m/s`); the "Vind" row also gains a direction arrow,
+   e.g. `Vind: 0,8 m/s →` (`-` when the direction is unknown).
 6. **Range stats row** — a muted row under the chart: `min 14,2° · maks 17,8°
    · snitt 16,1°`, recomputed per selected range; hidden when empty.
 
@@ -123,10 +123,9 @@ grid `bottom` grows to make room for the slider.
   once per `buildOption` call. Each row's value is formatted with a Norwegian
   1-decimal number formatter and a per-series unit (`Vann`/`Luft` → `°C`,
   `Vind` → `m/s`); a `null` value falls back to `–` with no unit. For the Vind
-  row, look up the reading by `s.value[0]` (the ms timestamp) and append
-  `(kast <gust> <arrow>)` when gust is present (gust formatted with the same
-  Norwegian formatter), where `<arrow>` is `degToArrow(windDir)` or `-` when the
-  direction is unknown.
+  row, when the wind speed is present, look up the reading by `s.value[0]` (the
+  ms timestamp) and append a direction arrow `degToArrow(windDir)` (or `-` when
+  the direction is unknown), e.g. `Vind: 0,8 m/s →`.
 - **Two fixes folded in:**
   - Guard the tooltip formatter against empty/missing `params`
     (`if (!params || !params.length) return ""`).
@@ -175,7 +174,7 @@ of the big temperature and as-of time; use `allReadings` only for the trend.
 - `src/data.js` (pure): gains `waterStats`, `isStale`, `humanizeAge`,
   `degToArrow`, `waterTrend`. Existing exports unchanged.
 - `app.js`: thresholds constants; `buildOption` (dataZoom, comfort markLine,
-  enriched tooltip with gust/direction arrow, empty-params guard, `nowEpoch`→
+  enriched tooltip with per-series units + direction arrow, empty-params guard, `nowEpoch`→
   `nowEpochSec` rename, reduced-motion); `updateHeader` (age + stale + trend);
   `render` (stats row, header refresh).
 - `index.html`: `#current-trend` span, `#stats` element.
@@ -201,8 +200,8 @@ Unit tests (`node --test`, zero deps) in [test/data.test.js](test/data.test.js):
 
 Visual verification (serve the page): stale badge appears when the latest
 reading is old; trend arrow shows correct color/sign or hides; 18° line labelled
-"behagelig"; slider zooms/pans on every range; Vind tooltip shows gust +
-direction arrow; stats row matches the selected range and uses Norwegian commas;
+"behagelig"; slider zooms/pans on every range; Vind tooltip shows a direction
+arrow; stats row matches the selected range and uses Norwegian commas;
 narrow-viewport layout wraps; animations off under reduced-motion. `buildOption`
 and DOM remain visually verified, as before.
 

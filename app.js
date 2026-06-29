@@ -111,12 +111,9 @@ function buildOption(readings, rangeKey, nowEpochSec) {
             const unit = SERIES_UNIT[s.seriesName] ?? "";
             const value = raw == null ? "–" : `${nf1.format(raw)} ${unit}`.trim();
             let line = `${s.marker}${s.seriesName}: <b>${value}</b>`;
-            if (s.seriesName === "Vind") {
+            if (s.seriesName === "Vind" && raw != null) {
               const r = byMs.get(s.value?.[0]);
-              if (r && r.windGust != null) {
-                const arrow = degToArrow(r.windDir) ?? "-";
-                line += ` (kast ${nf1.format(r.windGust)} ${arrow})`;
-              }
+              line += ` ${degToArrow(r?.windDir) ?? "-"}`;
             }
             return line;
           })
