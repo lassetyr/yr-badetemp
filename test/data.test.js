@@ -5,6 +5,8 @@ import {
   latestReadingUrl,
   mapRow,
   rangeBounds,
+  toSeriesPairs,
+  GAP_BREAK_MS,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -107,4 +109,79 @@ test("mapRow converts snake_case columns to the camelCase reading shape", () => 
     windGust: 2.6,
     windDir: 78,
   });
+});
+
+test("GAP_BREAK_MS is six hours in milliseconds", () => {
+  assert.equal(GAP_BREAK_MS, 6 * 3600 * 1000);
+});
+
+test("toSeriesPairs maps readings to [ms, value] pairs with no breaks within threshold", () => {
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 1200, water: 11 }, // +20 min
+    { epoch: 2400, water: 12 }, // +20 min
+  ];
+  assert.deepEqual(toSeriesPairs(readings, "water"), [
+    [0, 10],
+    [1_200_000, 11],
+    [2_400_000, 12],
+  ]);
+});
+
+test("toSeriesPairs inserts one [midpoint, null] break for a gap over the threshold", () => {
+  // 6h = 21600s. A 21601s gap exceeds the threshold; a 21600s gap does not.
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 21_601, water: 12 },
+  ];
+  assert.deepEqual(toSeriesPairs(readings, "water"), [
+    [0, 10],
+    [Math.floor((0 + 21_601_000) / 2), null],
+    [21_601_000, 12],
+  ]);
+});
+
+test("toSeriesPairs does not break on a gap exactly equal to the threshold", () => {
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 21_600, water: 12 }, // exactly 6h
+  ];
+  assert.deepEqual(toSeriesPairs(readings, "water"), [
+    [0, 10],
+    [21_600_000, 12],
+  ]);
+});
+
+test("toSeriesPairs keeps an isolated reading (break before and after) as a pair", () => {
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 30_000, water: 11 }, // big gap before and after (>6h each)
+    { epoch: 60_000, water: 12 },
+  ];
+  const out = toSeriesPairs(readings, "water");
+  // The middle reading survives as a real pair amid the null breaks.
+  assert.ok(out.some((item) => item[0] === 30_000_000 && item[1] === 11));
+  // Two breaks inserted (one before, one after the middle reading).
+  assert.equal(out.filter((item) => item[1] === null).length, 2);
+});
+
+test("toSeriesPairs passes through a null field value as [ms, null]", () => {
+  const readings = [
+    { epoch: 0, air: 20 },
+    { epoch: 1200, air: null }, // water-only row: no air
+  ];
+  assert.deepEqual(toSeriesPairs(readings, "air"), [
+    [0, 20],
+    [1_200_000, null],
+  ]);
+});
+
+test("toSeriesPairs respects a custom gapBreakMs", () => {
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 120, water: 11 }, // +2 min
+  ];
+  // 1-minute threshold → 2-min gap breaks.
+  const out = toSeriesPairs(readings, "water", 60 * 1000);
+  assert.equal(out.filter((item) => item[1] === null).length, 1);
 });

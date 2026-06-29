@@ -46,6 +46,30 @@ export function latestReadingUrl(baseUrl, locationId) {
   return `${baseUrl}/rest/v1/readings?${params.toString()}`;
 }
 
+// A gap larger than this between consecutive readings breaks the chart line, so
+// a stale or interrupted feed reads as missing data rather than a straight line.
+export const GAP_BREAK_MS = 6 * 3600 * 1000;
+
+// Build ECharts time-axis data ([ms, value] pairs) for one series. Inserts a
+// [midpoint, null] break between consecutive readings more than gapBreakMs
+// apart; ECharts splits the line at the null (connectNulls stays false) and
+// still draws a symbol for an isolated point left between two breaks. A null
+// field value (e.g. air on a water-only row) passes through as [ms, null].
+export function toSeriesPairs(readings, key, gapBreakMs = GAP_BREAK_MS) {
+  const out = [];
+  for (let i = 0; i < readings.length; i++) {
+    const ms = readings[i].epoch * 1000;
+    if (i > 0) {
+      const prevMs = readings[i - 1].epoch * 1000;
+      if (ms - prevMs > gapBreakMs) {
+        out.push([Math.floor((prevMs + ms) / 2), null]);
+      }
+    }
+    out.push([ms, readings[i][key] ?? null]);
+  }
+  return out;
+}
+
 // Map a PostgREST row (snake_case) to the camelCase reading shape the chart
 // consumes.
 export function mapRow(row) {
