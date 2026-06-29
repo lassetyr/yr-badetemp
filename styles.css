@@ -77,3 +77,15 @@ body {
   font-size: 0.85rem;
   margin: 8px 0 0;
 }
+
+@media (max-width: 600px) {
+  body { padding: 16px; }
+  .header { align-items: flex-start; }
+  .current { text-align: left; }
+  .chart { height: 320px; }
+  .ranges { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
