@@ -1,4 +1,10 @@
-import { readingsQueryUrl, latestReadingUrl, mapRow } from "./src/data.js";
+import {
+  readingsQueryUrl,
+  latestReadingUrl,
+  mapRow,
+  rangeBounds,
+  toSeriesPairs,
+} from "./src/data.js";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./src/config.js";
 
 const LOCATION_ID = "0-10238"; // Dulpen, Holmestrand
@@ -48,7 +54,8 @@ function osloParts(isoTime, opts) {
     .reduce((acc, part) => ((acc[part.type] = part.value), acc), {});
 }
 
-function buildOption(readings) {
+function buildOption(readings, rangeKey, nowEpoch) {
+  const bounds = rangeBounds(rangeKey, nowEpoch);
   return {
     grid: { left: 50, right: 50, top: 30, bottom: 40 },
     tooltip: {
@@ -63,7 +70,7 @@ function buildOption(readings) {
         });
         const header = `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
         const rows = params
-          .map((s) => `${s.marker}${s.seriesName}: <b>${s.value ?? "–"}</b>`)
+          .map((s) => `${s.marker}${s.seriesName}: <b>${s.value?.[1] ?? "–"}</b>`)
           .join("<br>");
         return `${header}<br>${rows}`;
       },
@@ -80,8 +87,11 @@ function buildOption(readings) {
       inactiveColor: "#64748b",
     },
     xAxis: {
-      type: "category",
-      data: readings.map((r) => r.time),
+      type: "time",
+      // Right edge pinned to now; left edge spans the selected range (undefined
+      // for "all", letting ECharts fit the earliest reading).
+      min: bounds.min,
+      max: bounds.max,
       axisLabel: {
         formatter: (value) => {
           const p = osloParts(value, {
@@ -111,7 +121,7 @@ function buildOption(readings) {
         smooth: true,
         showSymbol: false,
         yAxisIndex: 0,
-        data: readings.map((r) => r.water),
+        data: toSeriesPairs(readings, "water"),
         lineStyle: { width: 3, color: "#0ea5e9" },
         itemStyle: { color: "#0ea5e9" },
         areaStyle: {
@@ -127,7 +137,7 @@ function buildOption(readings) {
         smooth: true,
         showSymbol: false,
         yAxisIndex: 0,
-        data: readings.map((r) => r.air),
+        data: toSeriesPairs(readings, "air"),
         lineStyle: { width: 2, color: "#f59e0b" },
         itemStyle: { color: "#f59e0b" },
       },
@@ -137,7 +147,7 @@ function buildOption(readings) {
         smooth: true,
         showSymbol: false,
         yAxisIndex: 1,
-        data: readings.map((r) => r.windSpeed),
+        data: toSeriesPairs(readings, "windSpeed"),
         lineStyle: { width: 1.5, color: "#94a3b8", type: "dashed" },
         itemStyle: { color: "#94a3b8" },
       },
@@ -153,7 +163,7 @@ function render() {
     return;
   }
   empty.hidden = true;
-  chart.setOption(buildOption(allReadings), true);
+  chart.setOption(buildOption(allReadings, currentRange, nowEpoch()), true);
 }
 
 function updateHeader() {
