@@ -83,3 +83,19 @@ export function mapRow(row) {
     windDir: row.wind_dir,
   };
 }
+
+// Min/max/mean over the non-null water values in readings, or null when there
+// are none. avg is left unrounded; callers format for display.
+export function waterStats(readings) {
+  const values = readings.map((r) => r.water).filter((v) => v != null);
+  if (values.length === 0) return null;
+  let min = values[0];
+  let max = values[0];
+  let sum = 0;
+  for (const v of values) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+  }
+  return { min, max, avg: sum / values.length };
+}

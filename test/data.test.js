@@ -7,6 +7,7 @@ import {
   rangeBounds,
   toSeriesPairs,
   GAP_BREAK_MS,
+  waterStats,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -184,4 +185,30 @@ test("toSeriesPairs respects a custom gapBreakMs", () => {
   // 1-minute threshold → 2-min gap breaks.
   const out = toSeriesPairs(readings, "water", 60 * 1000);
   assert.equal(out.filter((item) => item[1] === null).length, 1);
+});
+
+test("waterStats returns min/max/avg over non-null water values", () => {
+  const s = waterStats([
+    { water: 14 }, { water: 18 }, { water: 16 },
+  ]);
+  assert.equal(s.min, 14);
+  assert.equal(s.max, 18);
+  assert.equal(s.avg, 16);
+});
+
+test("waterStats ignores null water values", () => {
+  const s = waterStats([{ water: 15 }, { water: null }, { water: 17 }]);
+  assert.equal(s.min, 15);
+  assert.equal(s.max, 17);
+  assert.equal(s.avg, 16);
+});
+
+test("waterStats returns null when no usable values", () => {
+  assert.equal(waterStats([]), null);
+  assert.equal(waterStats([{ water: null }, { water: null }]), null);
+});
+
+test("waterStats with a single reading gives min=max=avg", () => {
+  const s = waterStats([{ water: 16.5 }]);
+  assert.deepEqual(s, { min: 16.5, max: 16.5, avg: 16.5 });
 });
