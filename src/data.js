@@ -83,3 +83,71 @@ export function mapRow(row) {
     windDir: row.wind_dir,
   };
 }
+
+// Min/max/mean over the non-null water values in readings, or null when there
+// are none. avg is left unrounded; callers format for display.
+export function waterStats(readings) {
+  const values = readings.map((r) => r.water).filter((v) => v != null);
+  if (values.length === 0) return null;
+  let min = values[0];
+  let max = values[0];
+  let sum = 0;
+  for (const v of values) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+  }
+  return { min, max, avg: sum / values.length };
+}
+
+// True when the latest reading is older than thresholdSec. Epochs in seconds.
+// A missing latestEpoch is treated as not-stale (nothing to flag).
+export function isStale(latestEpoch, nowEpoch, thresholdSec) {
+  if (latestEpoch == null) return false;
+  return nowEpoch - latestEpoch > thresholdSec;
+}
+
+// Short Norwegian age string for a duration in seconds: "12 min", "3 t", "2 d".
+// Floors to the largest whole unit; negative/null collapses to "0 min".
+export function humanizeAge(seconds) {
+  if (seconds == null || seconds < 0) return "0 min";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(seconds / 3600);
+  if (hours < 24) return `${hours} t`;
+  return `${Math.floor(seconds / 86400)} d`;
+}
+
+// 8-point Norwegian compass abbreviation for a bearing in degrees, or null when
+// the bearing is missing/non-finite. Rounds to the nearest 45° sector.
+const COMPASS_8 = ["N", "NØ", "Ø", "SØ", "S", "SV", "V", "NV"];
+export function degToCompass(deg) {
+  if (deg == null || !Number.isFinite(deg)) return null;
+  const normalized = ((deg % 360) + 360) % 360;
+  return COMPASS_8[Math.round(normalized / 45) % 8];
+}
+
+// Trend of the newest water reading vs the reading nearest windowSec earlier.
+// Only readings with a non-null water value count. Returns null unless a
+// candidate exists within toleranceSec of the target time (so it won't compare
+// against a wildly-off point). direction is "flat" when the delta rounds to 0,0.
+export function waterTrend(readings, windowSec, toleranceSec) {
+  const usable = readings.filter((r) => r.water != null);
+  if (usable.length < 2) return null;
+  const newest = usable[usable.length - 1];
+  const targetEpoch = newest.epoch - windowSec;
+  let best = null;
+  let bestDiff = Infinity;
+  for (const r of usable) {
+    if (r === newest) continue;
+    const diff = Math.abs(r.epoch - targetEpoch);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = r;
+    }
+  }
+  if (best == null || bestDiff > toleranceSec) return null;
+  const delta = newest.water - best.water;
+  const direction = Math.abs(delta) < 0.05 ? "flat" : delta > 0 ? "up" : "down";
+  return { delta, direction };
+}

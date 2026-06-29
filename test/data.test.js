@@ -7,6 +7,11 @@ import {
   rangeBounds,
   toSeriesPairs,
   GAP_BREAK_MS,
+  waterStats,
+  isStale,
+  humanizeAge,
+  degToCompass,
+  waterTrend,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -184,4 +189,188 @@ test("toSeriesPairs respects a custom gapBreakMs", () => {
   // 1-minute threshold → 2-min gap breaks.
   const out = toSeriesPairs(readings, "water", 60 * 1000);
   assert.equal(out.filter((item) => item[1] === null).length, 1);
+});
+
+test("waterStats returns min/max/avg over non-null water values", () => {
+  const s = waterStats([
+    { water: 14 }, { water: 18 }, { water: 16 },
+  ]);
+  assert.equal(s.min, 14);
+  assert.equal(s.max, 18);
+  assert.equal(s.avg, 16);
+});
+
+test("waterStats ignores null water values", () => {
+  const s = waterStats([{ water: 15 }, { water: null }, { water: 17 }]);
+  assert.equal(s.min, 15);
+  assert.equal(s.max, 17);
+  assert.equal(s.avg, 16);
+});
+
+test("waterStats returns null when no usable values", () => {
+  assert.equal(waterStats([]), null);
+  assert.equal(waterStats([{ water: null }, { water: null }]), null);
+});
+
+test("waterStats with a single reading gives min=max=avg", () => {
+  const s = waterStats([{ water: 16.5 }]);
+  assert.deepEqual(s, { min: 16.5, max: 16.5, avg: 16.5 });
+});
+
+test("isStale is false just under the threshold", () => {
+  // 1h 59m old, threshold 2h
+  assert.equal(isStale(1000, 1000 + 7140, 7200), false);
+});
+
+test("isStale is true past the threshold", () => {
+  // 2h 1m old, threshold 2h
+  assert.equal(isStale(1000, 1000 + 7260, 7200), true);
+});
+
+test("isStale is false exactly at the threshold (strict >)", () => {
+  assert.equal(isStale(1000, 1000 + 7200, 7200), false);
+});
+
+test("isStale is false when latestEpoch is missing", () => {
+  assert.equal(isStale(null, 99999, 7200), false);
+  assert.equal(isStale(undefined, 99999, 7200), false);
+});
+
+test("humanizeAge renders minutes under an hour", () => {
+  assert.equal(humanizeAge(0), "0 min");
+  assert.equal(humanizeAge(59 * 60), "59 min");
+});
+
+test("humanizeAge rolls into hours at 60 minutes", () => {
+  assert.equal(humanizeAge(60 * 60), "1 t");
+  assert.equal(humanizeAge(23 * 3600), "23 t");
+});
+
+test("humanizeAge rolls into days at 24 hours", () => {
+  assert.equal(humanizeAge(24 * 3600), "1 d");
+  assert.equal(humanizeAge(3 * 86400), "3 d");
+});
+
+test("humanizeAge guards negative/null input", () => {
+  assert.equal(humanizeAge(-10), "0 min");
+  assert.equal(humanizeAge(null), "0 min");
+});
+
+test("degToCompass maps each cardinal/intercardinal sector", () => {
+  assert.equal(degToCompass(0), "N");
+  assert.equal(degToCompass(45), "NØ");
+  assert.equal(degToCompass(90), "Ø");
+  assert.equal(degToCompass(135), "SØ");
+  assert.equal(degToCompass(180), "S");
+  assert.equal(degToCompass(225), "SV");
+  assert.equal(degToCompass(270), "V");
+  assert.equal(degToCompass(315), "NV");
+});
+
+test("degToCompass wraps around north", () => {
+  assert.equal(degToCompass(360), "N");
+  assert.equal(degToCompass(359), "N");
+  assert.equal(degToCompass(338), "N"); // 337.5 boundary rounds up to N
+});
+
+test("degToCompass rounds to the nearest sector", () => {
+  assert.equal(degToCompass(22.5), "NØ"); // boundary rounds up
+  assert.equal(degToCompass(60), "NØ");   // closer to 45 than 90
+  assert.equal(degToCompass(78), "Ø");    // closer to 90 than 45
+});
+
+test("degToCompass returns null for missing/invalid input", () => {
+  assert.equal(degToCompass(null), null);
+  assert.equal(degToCompass(undefined), null);
+  assert.equal(degToCompass(NaN), null);
+});
+
+const HOUR = 3600;
+const DAY = 24 * HOUR;
+
+test("waterTrend reports a warming delta vs ~24h ago", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 15.0 },        // ~24h before newest
+      { epoch: 1000 + DAY, water: 15.4 },  // newest
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 0.4) < 1e-9);
+});
+
+test("waterTrend reports a cooling delta", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 17.0 },
+      { epoch: 1000 + DAY, water: 16.0 },
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "down");
+  assert.ok(Math.abs(t.delta + 1.0) < 1e-9);
+});
+
+test("waterTrend is flat when the delta rounds to zero", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 16.02 },
+      { epoch: 1000 + DAY, water: 16.0 },
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "flat");
+});
+
+test("waterTrend returns null when no point is near the 24h-ago target", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 15.0 },          // 12h before newest, > 6h tolerance off the 24h target
+      { epoch: 1000 + 12 * HOUR, water: 16.0 }, // newest
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t, null);
+});
+
+test("waterTrend returns null with fewer than two usable readings", () => {
+  assert.equal(waterTrend([{ epoch: 1000, water: 15 }], DAY, 6 * HOUR), null);
+  assert.equal(
+    waterTrend([{ epoch: 1000, water: null }, { epoch: 1000 + DAY, water: 16 }], DAY, 6 * HOUR),
+    null,
+  );
+});
+
+test("waterTrend accepts a candidate exactly at the tolerance boundary (strict >)", () => {
+  // newest target is 24h before newest (epoch 1000); the candidate sits 6h off
+  // that target, i.e. exactly toleranceSec away — must be accepted, not rejected.
+  const t = waterTrend(
+    [
+      { epoch: 1000 + 6 * HOUR, water: 15.0 }, // 6h from the 24h-ago target
+      { epoch: 1000 + DAY, water: 16.0 },      // newest
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 1.0) < 1e-9);
+});
+
+test("waterTrend skips null-water candidates and picks the nearest usable one", () => {
+  const t = waterTrend(
+    [
+      { epoch: 1000, water: 14.0 },           // exactly 24h ago, usable
+      { epoch: 1000 + HOUR, water: null },    // closer to target but unusable
+      { epoch: 1000 + DAY, water: 15.0 },     // newest
+    ],
+    DAY,
+    6 * HOUR,
+  );
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 1.0) < 1e-9);
 });

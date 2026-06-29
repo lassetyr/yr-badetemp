@@ -4,6 +4,11 @@ import {
   mapRow,
   rangeBounds,
   toSeriesPairs,
+  waterStats,
+  isStale,
+  humanizeAge,
+  degToCompass,
+  waterTrend,
 } from "./src/data.js";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./src/config.js";
 
@@ -11,6 +16,12 @@ const LOCATION_ID = "0-10238"; // Dulpen, Holmestrand
 const REFRESH_MS = 5 * 60 * 1000;
 const chart = echarts.init(document.getElementById("chart"));
 const RANGES = ["24h", "7d", "30d", "all"];
+
+// UI thresholds (policy lives here; src/data.js stays free of it).
+const STALE_THRESHOLD_SEC = 2 * 3600; // header "utdatert" badge
+const COMFORT_TEMP = 18; // comfortable-swim reference line (°C)
+const TREND_WINDOW_SEC = 24 * 3600; // trend compares vs ~24h ago
+const TREND_TOLERANCE_SEC = 6 * 3600; // max slack on the 24h-ago point
 let allReadings = [];
 let latest = null;
 let refreshTimerId = null;
@@ -42,6 +53,23 @@ function loadRange() {
 
 const nowEpoch = () => Math.floor(Date.now() / 1000);
 
+// "+0,4" / "-1,0" — Norwegian comma, explicit sign, one decimal.
+const signedTemp = new Intl.NumberFormat("nb-NO", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+  signDisplay: "always",
+});
+
+// "16,1" — Norwegian comma, one decimal, no sign. Used for any measured value
+// (water/air °C, wind m/s) in the stats row and tooltip.
+const nf1 = new Intl.NumberFormat("nb-NO", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
+// Unit shown after each series value in the tooltip.
+const SERIES_UNIT = { Vann: "°C", Luft: "°C", Vind: "m/s" };
+
 // Format an ISO time string in Norwegian time (Europe/Oslo), independent of
 // the viewer's device timezone. Returns the requested date/time parts by name.
 function osloParts(isoTime, opts) {
@@ -54,13 +82,21 @@ function osloParts(isoTime, opts) {
     .reduce((acc, part) => ((acc[part.type] = part.value), acc), {});
 }
 
-function buildOption(readings, rangeKey, nowEpoch) {
-  const bounds = rangeBounds(rangeKey, nowEpoch);
+function buildOption(readings, rangeKey, nowEpochSec) {
+  const bounds = rangeBounds(rangeKey, nowEpochSec);
+  const reducedMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+  // ms timestamp → reading, so the tooltip can enrich the Vind row with the
+  // gust/direction fields that aren't part of the plotted [ms, value] pairs.
+  const byMs = new Map(readings.map((r) => [r.epoch * 1000, r]));
   return {
-    grid: { left: 50, right: 50, top: 30, bottom: 40 },
+    animation: !reducedMotion,
+    grid: { left: 50, right: 50, top: 30, bottom: 60 },
     tooltip: {
       trigger: "axis",
       formatter: (params) => {
+        if (!params || !params.length) return "";
         const p = osloParts(params[0].axisValue, {
           day: "2-digit",
           month: "2-digit",
@@ -70,7 +106,24 @@ function buildOption(readings, rangeKey, nowEpoch) {
         });
         const header = `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
         const rows = params
-          .map((s) => `${s.marker}${s.seriesName}: <b>${s.value?.[1] ?? "–"}</b>`)
+          .map((s) => {
+            const raw = s.value?.[1];
+            const unit = SERIES_UNIT[s.seriesName] ?? "";
+            const value = raw == null ? "–" : `${nf1.format(raw)} ${unit}`.trim();
+            let line = `${s.marker}${s.seriesName}: <b>${value}</b>`;
+            if (s.seriesName === "Vind") {
+              const r = byMs.get(s.value?.[0]);
+              if (r && r.windGust != null) {
+                const compass = degToCompass(r.windDir);
+                const dir =
+                  r.windDir != null
+                    ? ` · ${r.windDir}°${compass ? ` ${compass}` : ""}`
+                    : "";
+                line += ` (kast ${nf1.format(r.windGust)}${dir})`;
+              }
+            }
+            return line;
+          })
           .join("<br>");
         return `${header}<br>${rows}`;
       },
@@ -86,6 +139,28 @@ function buildOption(readings, rangeKey, nowEpoch) {
       textStyle: { color: "#e2e8f0", fontSize: 13 },
       inactiveColor: "#64748b",
     },
+    dataZoom: [
+      { type: "inside" },
+      {
+        type: "slider",
+        height: 18,
+        bottom: 8,
+        borderColor: "transparent",
+        backgroundColor: "rgba(148,163,184,0.08)",
+        fillerColor: "rgba(14,165,233,0.18)",
+        handleStyle: { color: "#94a3b8" },
+        moveHandleStyle: { color: "#94a3b8" },
+        dataBackground: {
+          lineStyle: { color: "#475569" },
+          areaStyle: { color: "#334155" },
+        },
+        selectedDataBackground: {
+          lineStyle: { color: "#0ea5e9" },
+          areaStyle: { color: "rgba(14,165,233,0.25)" },
+        },
+        textStyle: { color: "#94a3b8" },
+      },
+    ],
     xAxis: {
       type: "time",
       // Right edge pinned to now; left edge spans the selected range (undefined
@@ -124,6 +199,17 @@ function buildOption(readings, rangeKey, nowEpoch) {
         data: toSeriesPairs(readings, "water"),
         lineStyle: { width: 3, color: "#0ea5e9" },
         itemStyle: { color: "#0ea5e9" },
+        markLine: {
+          silent: true,
+          symbol: "none",
+          data: [{ yAxis: COMFORT_TEMP }],
+          lineStyle: { color: "#94a3b8", type: "dotted", opacity: 0.6 },
+          label: {
+            formatter: "behagelig",
+            color: "#94a3b8",
+            position: "insideEndTop",
+          },
+        },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: "rgba(14,165,233,0.35)" },
@@ -160,10 +246,44 @@ function render() {
   if (allReadings.length === 0) {
     empty.hidden = false;
     chart.clear();
+    updateTrend();
+    updateStats();
     return;
   }
   empty.hidden = true;
   chart.setOption(buildOption(allReadings, currentRange, nowEpoch()), true);
+  updateTrend();
+  updateStats();
+}
+
+function updateTrend() {
+  const el = document.getElementById("current-trend");
+  const trend = waterTrend(allReadings, TREND_WINDOW_SEC, TREND_TOLERANCE_SEC);
+  if (!trend) {
+    el.hidden = true;
+    return;
+  }
+  const arrow =
+    trend.direction === "up" ? "▲" : trend.direction === "down" ? "▼" : "▬";
+  el.textContent = `${arrow} ${signedTemp.format(trend.delta)}°`;
+  el.classList.toggle("up", trend.direction === "up");
+  el.classList.toggle("down", trend.direction === "down");
+  el.classList.toggle("flat", trend.direction === "flat");
+  el.hidden = false;
+}
+
+function updateStats() {
+  const el = document.getElementById("stats");
+  const s = waterStats(allReadings);
+  if (!s) {
+    el.hidden = true;
+    return;
+  }
+  el.textContent =
+    `min ${nf1.format(s.min)}° · ` +
+    `maks ${nf1.format(s.max)}° · ` +
+    `snitt ${nf1.format(s.avg)}°`;
+  el.hidden = false;
 }
 
 function updateHeader() {
@@ -176,8 +296,14 @@ function updateHeader() {
     hour: "2-digit",
     minute: "2-digit",
   });
-  document.getElementById("current-asof").textContent =
-    `oppdatert ${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
+  const asOf = document.getElementById("current-asof");
+  const now = nowEpoch();
+  const age = humanizeAge(now - latest.epoch);
+  const stale = isStale(latest.epoch, now, STALE_THRESHOLD_SEC);
+  asOf.textContent =
+    `oppdatert ${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute} (${age} siden)` +
+    (stale ? " ⚠ utdatert" : "");
+  asOf.classList.toggle("stale", stale);
 }
 
 function wireButtons() {
