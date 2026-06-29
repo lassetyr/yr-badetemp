@@ -106,3 +106,14 @@ export function isStale(latestEpoch, nowEpoch, thresholdSec) {
   if (latestEpoch == null) return false;
   return nowEpoch - latestEpoch > thresholdSec;
 }
+
+// Short Norwegian age string for a duration in seconds: "12 min", "3 t", "2 d".
+// Floors to the largest whole unit; negative/null collapses to "0 min".
+export function humanizeAge(seconds) {
+  if (seconds == null || seconds < 0) return "0 min";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(seconds / 3600);
+  if (hours < 24) return `${hours} t`;
+  return `${Math.floor(seconds / 86400)} d`;
+}

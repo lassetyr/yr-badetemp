@@ -9,6 +9,7 @@ import {
   GAP_BREAK_MS,
   waterStats,
   isStale,
+  humanizeAge,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -231,4 +232,24 @@ test("isStale is false exactly at the threshold (strict >)", () => {
 test("isStale is false when latestEpoch is missing", () => {
   assert.equal(isStale(null, 99999, 7200), false);
   assert.equal(isStale(undefined, 99999, 7200), false);
+});
+
+test("humanizeAge renders minutes under an hour", () => {
+  assert.equal(humanizeAge(0), "0 min");
+  assert.equal(humanizeAge(59 * 60), "59 min");
+});
+
+test("humanizeAge rolls into hours at 60 minutes", () => {
+  assert.equal(humanizeAge(60 * 60), "1 t");
+  assert.equal(humanizeAge(23 * 3600), "23 t");
+});
+
+test("humanizeAge rolls into days at 24 hours", () => {
+  assert.equal(humanizeAge(24 * 3600), "1 d");
+  assert.equal(humanizeAge(3 * 86400), "3 d");
+});
+
+test("humanizeAge guards negative/null input", () => {
+  assert.equal(humanizeAge(-10), "0 min");
+  assert.equal(humanizeAge(null), "0 min");
 });
