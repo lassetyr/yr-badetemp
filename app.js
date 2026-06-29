@@ -78,10 +78,14 @@ function osloParts(isoTime, opts) {
     .reduce((acc, part) => ((acc[part.type] = part.value), acc), {});
 }
 
-function buildOption(readings, rangeKey, nowEpoch) {
-  const bounds = rangeBounds(rangeKey, nowEpoch);
+function buildOption(readings, rangeKey, nowEpochSec) {
+  const bounds = rangeBounds(rangeKey, nowEpochSec);
+  const reducedMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
   return {
-    grid: { left: 50, right: 50, top: 30, bottom: 40 },
+    animation: !reducedMotion,
+    grid: { left: 50, right: 50, top: 30, bottom: 60 },
     tooltip: {
       trigger: "axis",
       formatter: (params) => {
@@ -110,6 +114,28 @@ function buildOption(readings, rangeKey, nowEpoch) {
       textStyle: { color: "#e2e8f0", fontSize: 13 },
       inactiveColor: "#64748b",
     },
+    dataZoom: [
+      { type: "inside" },
+      {
+        type: "slider",
+        height: 18,
+        bottom: 8,
+        borderColor: "transparent",
+        backgroundColor: "rgba(148,163,184,0.08)",
+        fillerColor: "rgba(14,165,233,0.18)",
+        handleStyle: { color: "#94a3b8" },
+        moveHandleStyle: { color: "#94a3b8" },
+        dataBackground: {
+          lineStyle: { color: "#475569" },
+          areaStyle: { color: "#334155" },
+        },
+        selectedDataBackground: {
+          lineStyle: { color: "#0ea5e9" },
+          areaStyle: { color: "rgba(14,165,233,0.25)" },
+        },
+        textStyle: { color: "#94a3b8" },
+      },
+    ],
     xAxis: {
       type: "time",
       // Right edge pinned to now; left edge spans the selected range (undefined
@@ -148,6 +174,17 @@ function buildOption(readings, rangeKey, nowEpoch) {
         data: toSeriesPairs(readings, "water"),
         lineStyle: { width: 3, color: "#0ea5e9" },
         itemStyle: { color: "#0ea5e9" },
+        markLine: {
+          silent: true,
+          symbol: "none",
+          data: [{ yAxis: COMFORT_TEMP }],
+          lineStyle: { color: "#94a3b8", type: "dotted", opacity: 0.6 },
+          label: {
+            formatter: "behagelig",
+            color: "#94a3b8",
+            position: "insideEndTop",
+          },
+        },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: "rgba(14,165,233,0.35)" },
