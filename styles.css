@@ -63,3 +63,5 @@ body {
 }
 
 .empty { color: var(--muted); text-align: center; padding: 40px; }
+
+.current .as-of.stale { color: #f59e0b; font-weight: 600; }

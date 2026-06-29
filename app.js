@@ -4,6 +4,11 @@ import {
   mapRow,
   rangeBounds,
   toSeriesPairs,
+  waterStats,
+  isStale,
+  humanizeAge,
+  degToCompass,
+  waterTrend,
 } from "./src/data.js";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./src/config.js";
 
@@ -11,6 +16,12 @@ const LOCATION_ID = "0-10238"; // Dulpen, Holmestrand
 const REFRESH_MS = 5 * 60 * 1000;
 const chart = echarts.init(document.getElementById("chart"));
 const RANGES = ["24h", "7d", "30d", "all"];
+
+// UI thresholds (policy lives here; src/data.js stays free of it).
+const STALE_THRESHOLD_SEC = 2 * 3600; // header "utdatert" badge
+const COMFORT_TEMP = 18; // comfortable-swim reference line (°C)
+const TREND_WINDOW_SEC = 24 * 3600; // trend compares vs ~24h ago
+const TREND_TOLERANCE_SEC = 6 * 3600; // max slack on the 24h-ago point
 let allReadings = [];
 let latest = null;
 let refreshTimerId = null;
@@ -176,8 +187,14 @@ function updateHeader() {
     hour: "2-digit",
     minute: "2-digit",
   });
-  document.getElementById("current-asof").textContent =
-    `oppdatert ${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
+  const asOf = document.getElementById("current-asof");
+  const now = nowEpoch();
+  const age = humanizeAge(now - latest.epoch);
+  const stale = isStale(latest.epoch, now, STALE_THRESHOLD_SEC);
+  asOf.textContent =
+    `oppdatert ${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute} (${age} siden)` +
+    (stale ? " ⚠ utdatert" : "");
+  asOf.classList.toggle("stale", stale);
 }
 
 function wireButtons() {
