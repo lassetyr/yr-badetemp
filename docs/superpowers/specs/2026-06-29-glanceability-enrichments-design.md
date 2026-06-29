@@ -64,8 +64,10 @@ are passed in by the caller (they're UI config, see below).
   - Floored integers. Negative/`null` input → `"0 min"` (clock-skew guard).
 
 - `degToArrow(deg)` → one of `"↑","↗","→","↘","↓","↙","←","↖"` or `null`
-  - 8-point direction arrow pointing toward the named sector (e.g. 225° SW →
-    `↙`). `null`/non-finite → `null`. Boundary at the midpoints
+  - 8-point arrow for the direction the wind blows TOWARD. Input is the
+    meteorological source bearing (where the wind comes from), so the arrow is
+    180° opposite: 225° (from SW) → `↗` (blows NE). `null`/non-finite → `null`.
+    Boundary at the midpoints
     (e.g. 0/360 → "N", 45 → "NØ", 337.5..360 wraps back to "N").
 
 - `waterTrend(readings, windowSec, toleranceSec)` → `{ delta, direction } | null`

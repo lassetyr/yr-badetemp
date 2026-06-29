@@ -256,28 +256,30 @@ test("humanizeAge guards negative/null input", () => {
   assert.equal(humanizeAge(null), "0 min");
 });
 
-test("degToArrow maps each cardinal/intercardinal sector to an arrow", () => {
-  assert.equal(degToArrow(0), "↑");
-  assert.equal(degToArrow(45), "↗");
-  assert.equal(degToArrow(90), "→");
-  assert.equal(degToArrow(135), "↘");
-  assert.equal(degToArrow(180), "↓");
-  assert.equal(degToArrow(225), "↙");
-  assert.equal(degToArrow(270), "←");
-  assert.equal(degToArrow(315), "↖");
+// Input is the bearing the wind comes FROM; the arrow shows where it blows TO
+// (180° opposite).
+test("degToArrow points opposite the source bearing (flow direction)", () => {
+  assert.equal(degToArrow(0), "↓");   // from N → blows S
+  assert.equal(degToArrow(45), "↙");  // from NE → blows SW
+  assert.equal(degToArrow(90), "←");  // from E → blows W
+  assert.equal(degToArrow(135), "↖"); // from SE → blows NW
+  assert.equal(degToArrow(180), "↑"); // from S → blows N
+  assert.equal(degToArrow(225), "↗"); // from SW → blows NE
+  assert.equal(degToArrow(270), "→"); // from W → blows E
+  assert.equal(degToArrow(315), "↘"); // from NW → blows SE
 });
 
 test("degToArrow wraps around north", () => {
-  assert.equal(degToArrow(360), "↑");
-  assert.equal(degToArrow(359), "↑");
-  assert.equal(degToArrow(338), "↑"); // 337.5 boundary rounds up to N
+  assert.equal(degToArrow(360), "↓"); // from N → blows S
+  assert.equal(degToArrow(359), "↓");
+  assert.equal(degToArrow(338), "↓"); // ≈ from N → blows S
 });
 
 test("degToArrow rounds to the nearest sector", () => {
-  assert.equal(degToArrow(22.5), "↗"); // boundary rounds up
-  assert.equal(degToArrow(60), "↗");   // closer to 45 than 90
-  assert.equal(degToArrow(78), "→");   // closer to 90 than 45
-  assert.equal(degToArrow(237), "↙");  // the value seen in the live tooltip (SV)
+  assert.equal(degToArrow(22.5), "↙"); // boundary rounds up
+  assert.equal(degToArrow(60), "↙");   // from ~NE → blows SW
+  assert.equal(degToArrow(78), "←");   // from ~E → blows W
+  assert.equal(degToArrow(237), "↗");  // the value seen in the live tooltip (from SW → blows NE)
 });
 
 test("degToArrow returns null for missing/invalid input", () => {

@@ -118,15 +118,16 @@ export function humanizeAge(seconds) {
   return `${Math.floor(seconds / 86400)} d`;
 }
 
-// 8-point direction arrow for a wind bearing in degrees, or null when the
-// bearing is missing/non-finite. The arrow points toward the named compass
-// sector (e.g. 225° south-west → "↙"), matching the bearing's meaning as a
-// glyph. Rounds to the nearest 45° sector.
+// 8-point arrow for the direction the wind blows TOWARD, or null when the
+// bearing is missing/non-finite. The input is a meteorological bearing (the
+// direction the wind comes FROM, as yr.no reports it), so the arrow points the
+// opposite way: a wind from the south-west (225°) blows north-east → "↗".
+// Rounds to the nearest 45° sector.
 const COMPASS_ARROWS = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"];
 export function degToArrow(deg) {
   if (deg == null || !Number.isFinite(deg)) return null;
-  const normalized = ((deg % 360) + 360) % 360;
-  return COMPASS_ARROWS[Math.round(normalized / 45) % 8];
+  const flow = (((deg + 180) % 360) + 360) % 360;
+  return COMPASS_ARROWS[Math.round(flow / 45) % 8];
 }
 
 // Trend of the newest water reading vs the reading nearest windowSec earlier.
