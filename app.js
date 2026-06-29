@@ -53,6 +53,13 @@ function loadRange() {
 
 const nowEpoch = () => Math.floor(Date.now() / 1000);
 
+// "+0,4" / "-1,0" — Norwegian comma, explicit sign, one decimal.
+const signedTemp = new Intl.NumberFormat("nb-NO", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+  signDisplay: "always",
+});
+
 // Format an ISO time string in Norwegian time (Europe/Oslo), independent of
 // the viewer's device timezone. Returns the requested date/time parts by name.
 function osloParts(isoTime, opts) {
@@ -171,10 +178,28 @@ function render() {
   if (allReadings.length === 0) {
     empty.hidden = false;
     chart.clear();
+    updateTrend();
     return;
   }
   empty.hidden = true;
   chart.setOption(buildOption(allReadings, currentRange, nowEpoch()), true);
+  updateTrend();
+}
+
+function updateTrend() {
+  const el = document.getElementById("current-trend");
+  const trend = waterTrend(allReadings, TREND_WINDOW_SEC, TREND_TOLERANCE_SEC);
+  if (!trend) {
+    el.hidden = true;
+    return;
+  }
+  const arrow =
+    trend.direction === "up" ? "▲" : trend.direction === "down" ? "▼" : "▬";
+  el.textContent = `${arrow} ${signedTemp.format(trend.delta)}°`;
+  el.classList.toggle("up", trend.direction === "up");
+  el.classList.toggle("down", trend.direction === "down");
+  el.classList.toggle("flat", trend.direction === "flat");
+  el.hidden = false;
 }
 
 function updateHeader() {

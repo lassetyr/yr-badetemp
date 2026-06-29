@@ -65,3 +65,8 @@ body {
 .empty { color: var(--muted); text-align: center; padding: 40px; }
 
 .current .as-of.stale { color: #f59e0b; font-weight: 600; }
+
+.current .trend { display: block; font-size: 1rem; font-weight: 600; }
+.current .trend.up { color: #22c55e; }
+.current .trend.down { color: #ef4444; }
+.current .trend.flat { color: var(--muted); }
