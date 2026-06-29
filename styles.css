@@ -70,3 +70,10 @@ body {
 .current .trend.up { color: #22c55e; }
 .current .trend.down { color: #ef4444; }
 .current .trend.flat { color: var(--muted); }
+
+.stats {
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.85rem;
+  margin: 8px 0 0;
+}

@@ -60,6 +60,12 @@ const signedTemp = new Intl.NumberFormat("nb-NO", {
   signDisplay: "always",
 });
 
+// "16,1" — Norwegian comma, one decimal, no sign.
+const plainTemp = new Intl.NumberFormat("nb-NO", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
 // Format an ISO time string in Norwegian time (Europe/Oslo), independent of
 // the viewer's device timezone. Returns the requested date/time parts by name.
 function osloParts(isoTime, opts) {
@@ -179,11 +185,13 @@ function render() {
     empty.hidden = false;
     chart.clear();
     updateTrend();
+    updateStats();
     return;
   }
   empty.hidden = true;
   chart.setOption(buildOption(allReadings, currentRange, nowEpoch()), true);
   updateTrend();
+  updateStats();
 }
 
 function updateTrend() {
@@ -199,6 +207,20 @@ function updateTrend() {
   el.classList.toggle("up", trend.direction === "up");
   el.classList.toggle("down", trend.direction === "down");
   el.classList.toggle("flat", trend.direction === "flat");
+  el.hidden = false;
+}
+
+function updateStats() {
+  const el = document.getElementById("stats");
+  const s = waterStats(allReadings);
+  if (!s) {
+    el.hidden = true;
+    return;
+  }
+  el.textContent =
+    `min ${plainTemp.format(s.min)}° · ` +
+    `maks ${plainTemp.format(s.max)}° · ` +
+    `snitt ${plainTemp.format(s.avg)}°`;
   el.hidden = false;
 }
 
