@@ -99,3 +99,10 @@ export function waterStats(readings) {
   }
   return { min, max, avg: sum / values.length };
 }
+
+// True when the latest reading is older than thresholdSec. Epochs in seconds.
+// A missing latestEpoch is treated as not-stale (nothing to flag).
+export function isStale(latestEpoch, nowEpoch, thresholdSec) {
+  if (latestEpoch == null) return false;
+  return nowEpoch - latestEpoch > thresholdSec;
+}

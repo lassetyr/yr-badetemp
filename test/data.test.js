@@ -8,6 +8,7 @@ import {
   toSeriesPairs,
   GAP_BREAK_MS,
   waterStats,
+  isStale,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -211,4 +212,23 @@ test("waterStats returns null when no usable values", () => {
 test("waterStats with a single reading gives min=max=avg", () => {
   const s = waterStats([{ water: 16.5 }]);
   assert.deepEqual(s, { min: 16.5, max: 16.5, avg: 16.5 });
+});
+
+test("isStale is false just under the threshold", () => {
+  // 1h 59m old, threshold 2h
+  assert.equal(isStale(1000, 1000 + 7140, 7200), false);
+});
+
+test("isStale is true past the threshold", () => {
+  // 2h 1m old, threshold 2h
+  assert.equal(isStale(1000, 1000 + 7260, 7200), true);
+});
+
+test("isStale is false exactly at the threshold (strict >)", () => {
+  assert.equal(isStale(1000, 1000 + 7200, 7200), false);
+});
+
+test("isStale is false when latestEpoch is missing", () => {
+  assert.equal(isStale(null, 99999, 7200), false);
+  assert.equal(isStale(undefined, 99999, 7200), false);
 });
