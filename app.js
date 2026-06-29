@@ -83,12 +83,16 @@ function buildOption(readings, rangeKey, nowEpochSec) {
   const reducedMotion = window.matchMedia(
     "(prefers-reduced-motion: reduce)",
   ).matches;
+  // ms timestamp → reading, so the tooltip can enrich the Vind row with the
+  // gust/direction fields that aren't part of the plotted [ms, value] pairs.
+  const byMs = new Map(readings.map((r) => [r.epoch * 1000, r]));
   return {
     animation: !reducedMotion,
     grid: { left: 50, right: 50, top: 30, bottom: 60 },
     tooltip: {
       trigger: "axis",
       formatter: (params) => {
+        if (!params || !params.length) return "";
         const p = osloParts(params[0].axisValue, {
           day: "2-digit",
           month: "2-digit",
@@ -98,7 +102,22 @@ function buildOption(readings, rangeKey, nowEpochSec) {
         });
         const header = `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
         const rows = params
-          .map((s) => `${s.marker}${s.seriesName}: <b>${s.value?.[1] ?? "–"}</b>`)
+          .map((s) => {
+            const value = s.value?.[1] ?? "–";
+            let line = `${s.marker}${s.seriesName}: <b>${value}</b>`;
+            if (s.seriesName === "Vind") {
+              const r = byMs.get(s.value?.[0]);
+              if (r && r.windGust != null) {
+                const compass = degToCompass(r.windDir);
+                const dir =
+                  r.windDir != null
+                    ? ` · ${r.windDir}°${compass ? ` ${compass}` : ""}`
+                    : "";
+                line += ` (kast ${r.windGust}${dir})`;
+              }
+            }
+            return line;
+          })
           .join("<br>");
         return `${header}<br>${rows}`;
       },
