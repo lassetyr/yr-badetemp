@@ -45,9 +45,9 @@ Tasks 1 and 2 are independent pure helpers (each fully unit-tested and mergeable
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `test/data.test.js` (extend the existing import line at the top to add the new names — see below — rather than adding a second import):
+Append to `test/data.test.js` (extend the existing import line at the top — do not add a second import). Only add `rangeBounds` here: ES named imports must resolve at load time, so importing `toSeriesPairs`/`GAP_BREAK_MS` before Task 2 exports them would fail the whole test file. Task 2 extends the same line.
 
-First, change the top import from:
+Change the top import from:
 
 ```javascript
 import { readingsQueryUrl, latestReadingUrl, mapRow } from "../src/data.js";
@@ -61,8 +61,6 @@ import {
   latestReadingUrl,
   mapRow,
   rangeBounds,
-  toSeriesPairs,
-  GAP_BREAK_MS,
 } from "../src/data.js";
 ```
 
@@ -153,7 +151,20 @@ git commit -m "feat: add rangeBounds helper for time-axis bounds"
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `test/data.test.js` (the import was already extended in Task 1; if implementing Task 2 alone, ensure `toSeriesPairs` and `GAP_BREAK_MS` are in the import line):
+First, extend the top import line in `test/data.test.js` (already includes `rangeBounds` from Task 1) to add the two new names:
+
+```javascript
+import {
+  readingsQueryUrl,
+  latestReadingUrl,
+  mapRow,
+  rangeBounds,
+  toSeriesPairs,
+  GAP_BREAK_MS,
+} from "../src/data.js";
+```
+
+Then append these tests:
 
 ```javascript
 test("GAP_BREAK_MS is six hours in milliseconds", () => {
