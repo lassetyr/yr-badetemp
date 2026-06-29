@@ -34,8 +34,9 @@ matching the existing I/O-free seam.
    **18 °C** labelled "behagelig".
 4. **dataZoom on all ranges** — inside (scroll/drag) + a dark slider, so any
    window can be zoomed/panned.
-5. **Richer tooltip** — the "Vind" row gains gust and compass direction, e.g.
-   `Vind: 0,8 m/s (kast 2,6 · 78° NØ)`.
+5. **Richer tooltip** — every row shows its value with a Norwegian-comma number
+   and a unit (`°C` / `m/s`); the "Vind" row also gains gust and compass
+   direction, e.g. `Vind: 0,8 m/s (kast 2,6 · 78° Ø)`.
 6. **Range stats row** — a muted row under the chart: `min 14,2° · maks 17,8°
    · snitt 16,1°`, recomputed per selected range; hidden when empty.
 
@@ -116,11 +117,12 @@ grid `bottom` grows to make room for the slider.
 - **Comfort line**: on the Vann series, a `markLine` with a single `yAxis: 18`
   entry, faint style, `label` "behagelig". Silent (no symbol, not in tooltip).
 - **Richer tooltip**: build a `Map<ms, reading>` from the passed-in `readings`
-  once per `buildOption` call. In the formatter, for the Vind row look up the
-  reading by `s.value[0]` (the ms timestamp) and append
+  once per `buildOption` call. Each row's value is formatted with a Norwegian
+  1-decimal number formatter and a per-series unit (`Vann`/`Luft` → `°C`,
+  `Vind` → `m/s`); a `null` value falls back to `–` with no unit. For the Vind
+  row, look up the reading by `s.value[0]` (the ms timestamp) and append
   `(kast <gust> · <dir>° <compass>)` when gust/dir are present, via
-  `degToCompass`. Values formatted with the existing Norwegian style. Vann/Luft
-  rows unchanged.
+  `degToCompass` (gust formatted with the same Norwegian formatter).
 - **Two fixes folded in:**
   - Guard the tooltip formatter against empty/missing `params`
     (`if (!params || !params.length) return ""`).

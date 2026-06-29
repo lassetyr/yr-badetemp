@@ -60,11 +60,15 @@ const signedTemp = new Intl.NumberFormat("nb-NO", {
   signDisplay: "always",
 });
 
-// "16,1" — Norwegian comma, one decimal, no sign.
-const plainTemp = new Intl.NumberFormat("nb-NO", {
+// "16,1" — Norwegian comma, one decimal, no sign. Used for any measured value
+// (water/air °C, wind m/s) in the stats row and tooltip.
+const nf1 = new Intl.NumberFormat("nb-NO", {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 });
+
+// Unit shown after each series value in the tooltip.
+const SERIES_UNIT = { Vann: "°C", Luft: "°C", Vind: "m/s" };
 
 // Format an ISO time string in Norwegian time (Europe/Oslo), independent of
 // the viewer's device timezone. Returns the requested date/time parts by name.
@@ -103,7 +107,9 @@ function buildOption(readings, rangeKey, nowEpochSec) {
         const header = `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
         const rows = params
           .map((s) => {
-            const value = s.value?.[1] ?? "–";
+            const raw = s.value?.[1];
+            const unit = SERIES_UNIT[s.seriesName] ?? "";
+            const value = raw == null ? "–" : `${nf1.format(raw)} ${unit}`.trim();
             let line = `${s.marker}${s.seriesName}: <b>${value}</b>`;
             if (s.seriesName === "Vind") {
               const r = byMs.get(s.value?.[0]);
@@ -113,7 +119,7 @@ function buildOption(readings, rangeKey, nowEpochSec) {
                   r.windDir != null
                     ? ` · ${r.windDir}°${compass ? ` ${compass}` : ""}`
                     : "";
-                line += ` (kast ${r.windGust}${dir})`;
+                line += ` (kast ${nf1.format(r.windGust)}${dir})`;
               }
             }
             return line;
@@ -274,9 +280,9 @@ function updateStats() {
     return;
   }
   el.textContent =
-    `min ${plainTemp.format(s.min)}° · ` +
-    `maks ${plainTemp.format(s.max)}° · ` +
-    `snitt ${plainTemp.format(s.avg)}°`;
+    `min ${nf1.format(s.min)}° · ` +
+    `maks ${nf1.format(s.max)}° · ` +
+    `snitt ${nf1.format(s.avg)}°`;
   el.hidden = false;
 }
 
