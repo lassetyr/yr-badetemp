@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readingsQueryUrl, latestReadingUrl, mapRow } from "../src/data.js";
+import {
+  readingsQueryUrl,
+  latestReadingUrl,
+  mapRow,
+  rangeBounds,
+} from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
 
@@ -48,6 +53,39 @@ test("latestReadingUrl fetches the single newest reading regardless of range", (
   assert.equal(url.searchParams.get("limit"), "1");
   // No range bound — the header must reflect the true latest reading always.
   assert.equal(url.searchParams.get("epoch"), null);
+});
+
+test("rangeBounds '24h' spans now-24h to now, in milliseconds", () => {
+  const now = 1_000_000;
+  assert.deepEqual(rangeBounds("24h", now), {
+    min: (now - 24 * 3600) * 1000,
+    max: now * 1000,
+  });
+});
+
+test("rangeBounds '7d' and '30d' use correct windows", () => {
+  const now = 100 * 24 * 3600;
+  assert.deepEqual(rangeBounds("7d", now), {
+    min: (now - 7 * 24 * 3600) * 1000,
+    max: now * 1000,
+  });
+  assert.deepEqual(rangeBounds("30d", now), {
+    min: (now - 30 * 24 * 3600) * 1000,
+    max: now * 1000,
+  });
+});
+
+test("rangeBounds 'all' leaves min undefined, max pinned to now", () => {
+  const now = 1_000_000;
+  assert.deepEqual(rangeBounds("all", now), { min: undefined, max: now * 1000 });
+});
+
+test("rangeBounds unknown range leaves min undefined", () => {
+  const now = 1_000_000;
+  assert.deepEqual(rangeBounds("nope", now), {
+    min: undefined,
+    max: now * 1000,
+  });
 });
 
 test("mapRow converts snake_case columns to the camelCase reading shape", () => {

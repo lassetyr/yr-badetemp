@@ -6,6 +6,17 @@ const RANGE_SECONDS = {
   "30d": 30 * 24 * 3600,
 };
 
+// Axis bounds in milliseconds for the selected range. The right edge is always
+// pinned to now so a stale feed shows an empty gap up to the current time. For
+// "all" (or an unknown key) the left edge is left to ECharts (undefined).
+export function rangeBounds(rangeKey, nowEpoch) {
+  const max = nowEpoch * 1000;
+  if (rangeKey in RANGE_SECONDS) {
+    return { min: (nowEpoch - RANGE_SECONDS[rangeKey]) * 1000, max };
+  }
+  return { min: undefined, max };
+}
+
 const COLUMNS = "time,epoch,water,air,wind_speed,wind_gust,wind_dir";
 
 // Build a PostgREST query URL for one location and time range. baseUrl is the
