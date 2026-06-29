@@ -10,7 +10,7 @@ import {
   waterStats,
   isStale,
   humanizeAge,
-  degToCompass,
+  degToArrow,
   waterTrend,
 } from "../src/data.js";
 
@@ -256,33 +256,34 @@ test("humanizeAge guards negative/null input", () => {
   assert.equal(humanizeAge(null), "0 min");
 });
 
-test("degToCompass maps each cardinal/intercardinal sector", () => {
-  assert.equal(degToCompass(0), "N");
-  assert.equal(degToCompass(45), "NØ");
-  assert.equal(degToCompass(90), "Ø");
-  assert.equal(degToCompass(135), "SØ");
-  assert.equal(degToCompass(180), "S");
-  assert.equal(degToCompass(225), "SV");
-  assert.equal(degToCompass(270), "V");
-  assert.equal(degToCompass(315), "NV");
+test("degToArrow maps each cardinal/intercardinal sector to an arrow", () => {
+  assert.equal(degToArrow(0), "↑");
+  assert.equal(degToArrow(45), "↗");
+  assert.equal(degToArrow(90), "→");
+  assert.equal(degToArrow(135), "↘");
+  assert.equal(degToArrow(180), "↓");
+  assert.equal(degToArrow(225), "↙");
+  assert.equal(degToArrow(270), "←");
+  assert.equal(degToArrow(315), "↖");
 });
 
-test("degToCompass wraps around north", () => {
-  assert.equal(degToCompass(360), "N");
-  assert.equal(degToCompass(359), "N");
-  assert.equal(degToCompass(338), "N"); // 337.5 boundary rounds up to N
+test("degToArrow wraps around north", () => {
+  assert.equal(degToArrow(360), "↑");
+  assert.equal(degToArrow(359), "↑");
+  assert.equal(degToArrow(338), "↑"); // 337.5 boundary rounds up to N
 });
 
-test("degToCompass rounds to the nearest sector", () => {
-  assert.equal(degToCompass(22.5), "NØ"); // boundary rounds up
-  assert.equal(degToCompass(60), "NØ");   // closer to 45 than 90
-  assert.equal(degToCompass(78), "Ø");    // closer to 90 than 45
+test("degToArrow rounds to the nearest sector", () => {
+  assert.equal(degToArrow(22.5), "↗"); // boundary rounds up
+  assert.equal(degToArrow(60), "↗");   // closer to 45 than 90
+  assert.equal(degToArrow(78), "→");   // closer to 90 than 45
+  assert.equal(degToArrow(237), "↙");  // the value seen in the live tooltip (SV)
 });
 
-test("degToCompass returns null for missing/invalid input", () => {
-  assert.equal(degToCompass(null), null);
-  assert.equal(degToCompass(undefined), null);
-  assert.equal(degToCompass(NaN), null);
+test("degToArrow returns null for missing/invalid input", () => {
+  assert.equal(degToArrow(null), null);
+  assert.equal(degToArrow(undefined), null);
+  assert.equal(degToArrow(NaN), null);
 });
 
 const HOUR = 3600;

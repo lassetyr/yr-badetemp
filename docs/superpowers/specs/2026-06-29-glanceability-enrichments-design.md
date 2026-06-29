@@ -35,8 +35,8 @@ matching the existing I/O-free seam.
 4. **dataZoom on all ranges** — inside (scroll/drag) + a dark slider, so any
    window can be zoomed/panned.
 5. **Richer tooltip** — every row shows its value with a Norwegian-comma number
-   and a unit (`°C` / `m/s`); the "Vind" row also gains gust and compass
-   direction, e.g. `Vind: 0,8 m/s (kast 2,6 · 78° Ø)`.
+   and a unit (`°C` / `m/s`); the "Vind" row also gains gust and a direction
+   arrow, e.g. `Vind: 0,8 m/s (kast 2,6 ↙)` (`-` when the direction is unknown).
 6. **Range stats row** — a muted row under the chart: `min 14,2° · maks 17,8°
    · snitt 16,1°`, recomputed per selected range; hidden when empty.
 
@@ -63,8 +63,9 @@ are passed in by the caller (they're UI config, see below).
   - `< 60 min` → `"<n> min"`; `< 24 h` → `"<n> t"`; else `"<n> d"`.
   - Floored integers. Negative/`null` input → `"0 min"` (clock-skew guard).
 
-- `degToCompass(deg)` → one of `"N","NØ","Ø","SØ","S","SV","V","NV"` or `null`
-  - 8-point compass. `null`/non-finite → `null`. Boundary at the midpoints
+- `degToArrow(deg)` → one of `"↑","↗","→","↘","↓","↙","←","↖"` or `null`
+  - 8-point direction arrow pointing toward the named sector (e.g. 225° SW →
+    `↙`). `null`/non-finite → `null`. Boundary at the midpoints
     (e.g. 0/360 → "N", 45 → "NØ", 337.5..360 wraps back to "N").
 
 - `waterTrend(readings, windowSec, toleranceSec)` → `{ delta, direction } | null`
@@ -121,8 +122,9 @@ grid `bottom` grows to make room for the slider.
   1-decimal number formatter and a per-series unit (`Vann`/`Luft` → `°C`,
   `Vind` → `m/s`); a `null` value falls back to `–` with no unit. For the Vind
   row, look up the reading by `s.value[0]` (the ms timestamp) and append
-  `(kast <gust> · <dir>° <compass>)` when gust/dir are present, via
-  `degToCompass` (gust formatted with the same Norwegian formatter).
+  `(kast <gust> <arrow>)` when gust is present (gust formatted with the same
+  Norwegian formatter), where `<arrow>` is `degToArrow(windDir)` or `-` when the
+  direction is unknown.
 - **Two fixes folded in:**
   - Guard the tooltip formatter against empty/missing `params`
     (`if (!params || !params.length) return ""`).
@@ -169,9 +171,9 @@ of the big temperature and as-of time; use `allReadings` only for the trend.
 ## Components & responsibilities
 
 - `src/data.js` (pure): gains `waterStats`, `isStale`, `humanizeAge`,
-  `degToCompass`, `waterTrend`. Existing exports unchanged.
+  `degToArrow`, `waterTrend`. Existing exports unchanged.
 - `app.js`: thresholds constants; `buildOption` (dataZoom, comfort markLine,
-  enriched tooltip with gust/compass, empty-params guard, `nowEpoch`→
+  enriched tooltip with gust/direction arrow, empty-params guard, `nowEpoch`→
   `nowEpochSec` rename, reduced-motion); `updateHeader` (age + stale + trend);
   `render` (stats row, header refresh).
 - `index.html`: `#current-trend` span, `#stats` element.
@@ -189,8 +191,8 @@ Unit tests (`node --test`, zero deps) in [test/data.test.js](test/data.test.js):
   strict `>`); null `latestEpoch` → `false`.
 - `humanizeAge`: `min` / `t` / `d` unit boundaries (59 min, 60 min→1 t, 23 h,
   24 h→1 d); negative/null → `"0 min"`.
-- `degToCompass`: each of the 8 sectors incl. the N wrap (0, 360, 359),
-  boundaries N/NØ (e.g. 22.5, 45), null/NaN → `null`.
+- `degToArrow`: each of the 8 sectors incl. the N (`↑`) wrap (0, 360, 359),
+  boundaries `↑`/`↗` (e.g. 22.5, 45), null/NaN → `null`.
 - `waterTrend`: warming and cooling deltas with correct sign and direction;
   no point near 24h-ago (gap > tolerance) → `null`; single reading → `null`;
   candidate with null water skipped; delta ≈ 0 → `"flat"`.
@@ -198,7 +200,7 @@ Unit tests (`node --test`, zero deps) in [test/data.test.js](test/data.test.js):
 Visual verification (serve the page): stale badge appears when the latest
 reading is old; trend arrow shows correct color/sign or hides; 18° line labelled
 "behagelig"; slider zooms/pans on every range; Vind tooltip shows gust +
-compass; stats row matches the selected range and uses Norwegian commas;
+direction arrow; stats row matches the selected range and uses Norwegian commas;
 narrow-viewport layout wraps; animations off under reduced-motion. `buildOption`
 and DOM remain visually verified, as before.
 

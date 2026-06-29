@@ -118,13 +118,15 @@ export function humanizeAge(seconds) {
   return `${Math.floor(seconds / 86400)} d`;
 }
 
-// 8-point Norwegian compass abbreviation for a bearing in degrees, or null when
-// the bearing is missing/non-finite. Rounds to the nearest 45° sector.
-const COMPASS_8 = ["N", "NØ", "Ø", "SØ", "S", "SV", "V", "NV"];
-export function degToCompass(deg) {
+// 8-point direction arrow for a wind bearing in degrees, or null when the
+// bearing is missing/non-finite. The arrow points toward the named compass
+// sector (e.g. 225° south-west → "↙"), matching the bearing's meaning as a
+// glyph. Rounds to the nearest 45° sector.
+const COMPASS_ARROWS = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"];
+export function degToArrow(deg) {
   if (deg == null || !Number.isFinite(deg)) return null;
   const normalized = ((deg % 360) + 360) % 360;
-  return COMPASS_8[Math.round(normalized / 45) % 8];
+  return COMPASS_ARROWS[Math.round(normalized / 45) % 8];
 }
 
 // Trend of the newest water reading vs the reading nearest windowSec earlier.

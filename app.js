@@ -7,7 +7,7 @@ import {
   waterStats,
   isStale,
   humanizeAge,
-  degToCompass,
+  degToArrow,
   waterTrend,
 } from "./src/data.js";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./src/config.js";
@@ -114,12 +114,8 @@ function buildOption(readings, rangeKey, nowEpochSec) {
             if (s.seriesName === "Vind") {
               const r = byMs.get(s.value?.[0]);
               if (r && r.windGust != null) {
-                const compass = degToCompass(r.windDir);
-                const dir =
-                  r.windDir != null
-                    ? ` · ${r.windDir}°${compass ? ` ${compass}` : ""}`
-                    : "";
-                line += ` (kast ${nf1.format(r.windGust)}${dir})`;
+                const arrow = degToArrow(r.windDir) ?? "-";
+                line += ` (kast ${nf1.format(r.windGust)} ${arrow})`;
               }
             }
             return line;
