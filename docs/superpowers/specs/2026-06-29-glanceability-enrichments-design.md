@@ -1,4 +1,4 @@
-# Design: Glanceability enrichments (stale badge, trend, comfort line, dataZoom, richer tooltip, stats row)
+# Design: Glanceability enrichments (stale badge, trend, dataZoom, richer tooltip, stats row)
 
 **Date:** 2026-06-29
 **Status:** Approved
@@ -11,15 +11,14 @@ visitor can't tell at a glance:
 
 - whether the "current" reading is actually current or hours stale,
 - whether the water is warming or cooling versus yesterday,
-- how this reading compares to a comfortable swimming temperature,
 - the min/max/average across the window they're looking at.
 
 The wind **gust** and **direction** are already fetched (`wind_gust`,
 `wind_dir`, surfaced as `windGust` / `windDir` by `mapRow`) but never shown.
 And the chart can't be zoomed/panned within a range.
 
-This adds six small enrichments without touching the backend, data layer, or
-ranges. Everything computed lives as pure, unit-tested helpers in
+This adds a set of small enrichments without touching the backend, data layer,
+or ranges. Everything computed lives as pure, unit-tested helpers in
 [src/data.js](src/data.js); all DOM/ECharts wiring stays in [app.js](app.js),
 matching the existing I/O-free seam.
 
@@ -31,15 +30,18 @@ matching the existing I/O-free seam.
 2. **Trend arrow** — next to the big temperature, show ▲/▼ and a signed delta
    for the change across the **selected period** (so it follows the range
    selector); hidden when there's too little data to compare.
-3. **Comfort reference line** — a faint `markLine` on the water series at
-   **18 °C** labelled "behagelig".
-4. **dataZoom on all ranges** — inside (scroll/drag) + a dark slider, so any
+3. **dataZoom on all ranges** — inside (scroll/drag) + a dark slider, so any
    window can be zoomed/panned.
-5. **Richer tooltip** — every row shows its value with a Norwegian-comma number
+4. **Richer tooltip** — every row shows its value with a Norwegian-comma number
    and a unit (`°C` / `m/s`); the "Vind" row also gains a direction arrow,
    e.g. `Vind: 0,8 m/s →` (`-` when the direction is unknown).
-6. **Range stats row** — a muted row under the chart: `min 14,2° · maks 17,8°
+5. **Range stats row** — a muted row under the chart: `min 14,2° · maks 17,8°
    · snitt 16,1°`, recomputed per selected range; hidden when empty.
+
+> **Update:** an 18 °C "behagelig" comfort reference line was part of the
+> original design and shipped, but was later removed at the owner's request.
+> The references below are left for history; the `markLine` and `COMFORT_TEMP`
+> are no longer in the code.
 
 Non-goals: backend / poller / Supabase changes, new ranges, changing series
 colors, refresh cadence, or the data-layer query (gust/direction already

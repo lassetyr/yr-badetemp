@@ -19,7 +19,6 @@ const RANGES = ["24h", "7d", "30d", "all"];
 
 // UI thresholds (policy lives here; src/data.js stays free of it).
 const STALE_THRESHOLD_SEC = 2 * 3600; // header "utdatert" badge
-const COMFORT_TEMP = 18; // comfortable-swim reference line (°C)
 const TREND_SAMPLE = 3; // readings averaged at each end for the period trend
 let allReadings = [];
 let latest = null;
@@ -191,17 +190,6 @@ function buildOption(readings, rangeKey, nowEpochSec) {
         data: toSeriesPairs(readings, "water"),
         lineStyle: { width: 3, color: "#0ea5e9" },
         itemStyle: { color: "#0ea5e9" },
-        markLine: {
-          silent: true,
-          symbol: "none",
-          data: [{ yAxis: COMFORT_TEMP }],
-          lineStyle: { color: "#94a3b8", type: "dotted", opacity: 0.6 },
-          label: {
-            formatter: "behagelig",
-            color: "#94a3b8",
-            position: "insideEndTop",
-          },
-        },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: "rgba(14,165,233,0.35)" },
