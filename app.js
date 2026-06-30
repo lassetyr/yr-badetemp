@@ -20,8 +20,7 @@ const RANGES = ["24h", "7d", "30d", "all"];
 // UI thresholds (policy lives here; src/data.js stays free of it).
 const STALE_THRESHOLD_SEC = 2 * 3600; // header "utdatert" badge
 const COMFORT_TEMP = 18; // comfortable-swim reference line (°C)
-const TREND_WINDOW_SEC = 24 * 3600; // trend compares vs ~24h ago
-const TREND_TOLERANCE_SEC = 6 * 3600; // max slack on the 24h-ago point
+const TREND_SAMPLE = 3; // readings averaged at each end for the period trend
 let allReadings = [];
 let latest = null;
 let refreshTimerId = null;
@@ -251,7 +250,7 @@ function render() {
 
 function updateTrend() {
   const el = document.getElementById("current-trend");
-  const trend = waterTrend(allReadings, TREND_WINDOW_SEC, TREND_TOLERANCE_SEC);
+  const trend = waterTrend(allReadings, TREND_SAMPLE);
   if (!trend) {
     el.hidden = true;
     return;

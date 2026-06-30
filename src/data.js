@@ -130,27 +130,22 @@ export function degToArrow(deg) {
   return COMPASS_ARROWS[Math.round(flow / 45) % 8];
 }
 
-// Trend of the newest water reading vs the reading nearest windowSec earlier.
-// Only readings with a non-null water value count. Returns null unless a
-// candidate exists within toleranceSec of the target time (so it won't compare
-// against a wildly-off point). direction is "flat" when the delta rounds to 0,0.
-export function waterTrend(readings, windowSec, toleranceSec) {
+// Net water-temperature change across the supplied readings (the selected
+// range): the mean of the last `sampleSize` readings minus the mean of the
+// first `sampleSize`, which smooths single-point noise at either end. The two
+// samples never overlap — `sampleSize` is capped at half the usable count — so
+// with few readings it gracefully narrows to a plain first-vs-last comparison.
+// readings are oldest-first; only non-null water values count. direction is
+// "flat" when the delta rounds to 0,0. Returns null with fewer than two usable
+// readings.
+export function waterTrend(readings, sampleSize) {
   const usable = readings.filter((r) => r.water != null);
   if (usable.length < 2) return null;
-  const newest = usable[usable.length - 1];
-  const targetEpoch = newest.epoch - windowSec;
-  let best = null;
-  let bestDiff = Infinity;
-  for (const r of usable) {
-    if (r === newest) continue;
-    const diff = Math.abs(r.epoch - targetEpoch);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = r;
-    }
-  }
-  if (best == null || bestDiff > toleranceSec) return null;
-  const delta = newest.water - best.water;
+  const n = Math.min(sampleSize, Math.floor(usable.length / 2));
+  const mean = (slice) => slice.reduce((sum, r) => sum + r.water, 0) / slice.length;
+  const start = mean(usable.slice(0, n));
+  const end = mean(usable.slice(usable.length - n));
+  const delta = end - start;
   const direction = Math.abs(delta) < 0.05 ? "flat" : delta > 0 ? "up" : "down";
   return { delta, direction };
 }

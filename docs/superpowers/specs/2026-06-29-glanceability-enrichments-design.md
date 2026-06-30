@@ -29,7 +29,8 @@ matching the existing I/O-free seam.
    header "oppdatert …" line as stale (amber tint + "⚠ utdatert"), and always
    append a human age ("12 min" / "3 t" / "2 d") to that line.
 2. **Trend arrow** — next to the big temperature, show ▲/▼ and a signed delta
-   versus the reading nearest **~24 h ago**; hidden when no comparable point.
+   for the change across the **selected period** (so it follows the range
+   selector); hidden when there's too little data to compare.
 3. **Comfort reference line** — a faint `markLine` on the water series at
    **18 °C** labelled "behagelig".
 4. **dataZoom on all ranges** — inside (scroll/drag) + a dark slider, so any
@@ -70,24 +71,25 @@ are passed in by the caller (they're UI config, see below).
     Boundary at the midpoints
     (e.g. 0/360 → "N", 45 → "NØ", 337.5..360 wraps back to "N").
 
-- `waterTrend(readings, windowSec, toleranceSec)` → `{ delta, direction } | null`
-  - Compares the **newest** reading's `water` to the reading whose `epoch` is
-    nearest `windowSec` earlier, but only if that candidate is within
-    `toleranceSec` of the target time (so it won't compare against a wildly-off
-    point). Otherwise `null`.
-  - `delta` = newest − past (signed, °C). `direction` = `"up" | "down" | "flat"`
+- `waterTrend(readings, sampleSize)` → `{ delta, direction } | null`
+  - Net change across the supplied `readings` (the selected range): the mean of
+    the **last** `sampleSize` readings minus the mean of the **first**
+    `sampleSize`. Averaging both ends smooths single-point noise; the two
+    samples never overlap (`sampleSize` is capped at half the usable count, so
+    with few readings it narrows to a plain first-vs-last comparison).
+  - `delta` = end − start (signed, °C). `direction` = `"up" | "down" | "flat"`
     (`"flat"` when `delta` rounds to 0,0 at one decimal). Readings with `null`
-    water are skipped as candidates. `null` when fewer than two usable points
-    or no candidate within tolerance.
-  - `readings` is the oldest-first array already in `allReadings`.
+    water are skipped. `null` when fewer than two usable points.
+  - `readings` is the oldest-first array already in `allReadings`, so the trend
+    automatically reflects whatever range the user has selected (and all history
+    for `Alle`). No time/epoch math — it operates on reading order.
 
 ### Thresholds (named constants in `app.js`, UI config)
 
 ```js
 const STALE_THRESHOLD_SEC = 2 * 3600;   // badge trigger
 const COMFORT_TEMP = 18;                // reference line °C
-const TREND_WINDOW_SEC = 24 * 3600;     // "vs ~24h ago"
-const TREND_TOLERANCE_SEC = 6 * 3600;   // max slack on the 24h-ago point
+const TREND_SAMPLE = 3;                 // readings averaged at each end of the period
 ```
 
 These stay in `app.js` and are passed into the pure helpers, keeping `data.js`
@@ -161,7 +163,7 @@ render():
 updateHeader():
   age   ← humanizeAge(nowEpoch() - latest.epoch)
   stale ← isStale(latest.epoch, nowEpoch(), STALE_THRESHOLD_SEC)
-  trend ← waterTrend(allReadings, TREND_WINDOW_SEC, TREND_TOLERANCE_SEC)
+  trend ← waterTrend(allReadings, TREND_SAMPLE)
 ```
 
 `updateHeader` currently runs only from `loadLatest`; the trend depends on
@@ -194,12 +196,14 @@ Unit tests (`node --test`, zero deps) in [test/data.test.js](test/data.test.js):
   24 h→1 d); negative/null → `"0 min"`.
 - `degToArrow`: each of the 8 sectors incl. the N (`↑`) wrap (0, 360, 359),
   boundaries `↑`/`↗` (e.g. 22.5, 45), null/NaN → `null`.
-- `waterTrend`: warming and cooling deltas with correct sign and direction;
-  no point near 24h-ago (gap > tolerance) → `null`; single reading → `null`;
-  candidate with null water skipped; delta ≈ 0 → `"flat"`.
+- `waterTrend`: warming and cooling deltas with correct sign/direction over the
+  smoothed ends; a single end spike is dampened by averaging; `sampleSize`
+  capped at half the readings (no overlap); null water skipped; fewer than two
+  usable readings → `null`; delta ≈ 0 → `"flat"`.
 
 Visual verification (serve the page): stale badge appears when the latest
-reading is old; trend arrow shows correct color/sign or hides; 18° line labelled
+reading is old; trend arrow reflects the selected range (changes when you switch
+24t/7d/30d/Alle) and hides with too little data; 18° line labelled
 "behagelig"; slider zooms/pans on every range; Vind tooltip shows a direction
 arrow; stats row matches the selected range and uses Norwegian commas;
 narrow-viewport layout wraps; animations off under reduced-motion. `buildOption`
@@ -207,13 +211,13 @@ and DOM remain visually verified, as before.
 
 ## Decisions (not open questions)
 
-- Stale threshold **2 h**, comfort temp **18 °C**, trend window **~24 h** with
-  **6 h** tolerance — all named constants in `app.js`.
+- Stale threshold **2 h**, comfort temp **18 °C**, trend sample **3 readings**
+  per end — all named constants in `app.js`.
 - dataZoom on **all** ranges (inside + dark slider).
 - Stats render as a **muted row under the chart**, recomputed per range, hidden
   when empty.
-- Trend is computed from `allReadings` (chart window), comparing newest to the
-  nearest-to-24h-ago point within tolerance; hidden when no such point.
+- Trend is computed from `allReadings` (the selected range) as the smoothed
+  net change from the start of the period to now; hidden with too little data.
 - Compass is 8-point, Norwegian abbreviations (N/NØ/Ø/SØ/S/SV/V/NV).
 - Empty-`params` tooltip guard and `nowEpoch`→`nowEpochSec` rename folded into
   this change.
