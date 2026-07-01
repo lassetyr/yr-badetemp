@@ -159,6 +159,9 @@ function buildOption(readings, rangeKey, nowEpochSec) {
       min: bounds.min,
       max: bounds.max,
       axisLabel: {
+        // Drop labels that would collide rather than letting them overprint —
+        // matters on narrow (mobile) widths where the time axis packs in ticks.
+        hideOverlap: true,
         formatter: (value) => {
           const p = osloParts(value, {
             day: "numeric",
