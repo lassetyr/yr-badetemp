@@ -243,9 +243,12 @@ function updateTrend() {
     el.hidden = true;
     return;
   }
-  const arrow =
-    trend.direction === "up" ? "▲" : trend.direction === "down" ? "▼" : "▬";
-  el.textContent = `${arrow} ${signedTemp.format(trend.delta)}°`;
+  // "flat" gets its own wording — a signed "±0,0°" reads as a nonsensical
+  // negative zero, so show a neutral "→ uendret" instead.
+  el.textContent =
+    trend.direction === "flat"
+      ? "→ uendret"
+      : `${trend.direction === "up" ? "▲" : "▼"} ${signedTemp.format(trend.delta)}°`;
   el.classList.toggle("up", trend.direction === "up");
   el.classList.toggle("down", trend.direction === "down");
   el.classList.toggle("flat", trend.direction === "flat");
