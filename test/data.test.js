@@ -1,6 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readingsQueryUrl, latestReadingUrl, mapRow } from "../src/data.js";
+import {
+  readingsQueryUrl,
+  latestReadingUrl,
+  mapRow,
+  rangeBounds,
+  toSeriesPairs,
+  GAP_BREAK_MS,
+  waterStats,
+  isStale,
+  humanizeAge,
+  degToArrow,
+  waterTrend,
+} from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
 
@@ -50,6 +62,39 @@ test("latestReadingUrl fetches the single newest reading regardless of range", (
   assert.equal(url.searchParams.get("epoch"), null);
 });
 
+test("rangeBounds '24h' spans now-24h to now, in milliseconds", () => {
+  const now = 1_000_000;
+  assert.deepEqual(rangeBounds("24h", now), {
+    min: (now - 24 * 3600) * 1000,
+    max: now * 1000,
+  });
+});
+
+test("rangeBounds '7d' and '30d' use correct windows", () => {
+  const now = 100 * 24 * 3600;
+  assert.deepEqual(rangeBounds("7d", now), {
+    min: (now - 7 * 24 * 3600) * 1000,
+    max: now * 1000,
+  });
+  assert.deepEqual(rangeBounds("30d", now), {
+    min: (now - 30 * 24 * 3600) * 1000,
+    max: now * 1000,
+  });
+});
+
+test("rangeBounds 'all' leaves min undefined, max pinned to now", () => {
+  const now = 1_000_000;
+  assert.deepEqual(rangeBounds("all", now), { min: undefined, max: now * 1000 });
+});
+
+test("rangeBounds unknown range leaves min undefined", () => {
+  const now = 1_000_000;
+  assert.deepEqual(rangeBounds("nope", now), {
+    min: undefined,
+    max: now * 1000,
+  });
+});
+
 test("mapRow converts snake_case columns to the camelCase reading shape", () => {
   const row = {
     time: "2026-06-18T18:38:27+02:00",
@@ -69,4 +114,241 @@ test("mapRow converts snake_case columns to the camelCase reading shape", () => 
     windGust: 2.6,
     windDir: 78,
   });
+});
+
+test("GAP_BREAK_MS is six hours in milliseconds", () => {
+  assert.equal(GAP_BREAK_MS, 6 * 3600 * 1000);
+});
+
+test("toSeriesPairs maps readings to [ms, value] pairs with no breaks within threshold", () => {
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 1200, water: 11 }, // +20 min
+    { epoch: 2400, water: 12 }, // +20 min
+  ];
+  assert.deepEqual(toSeriesPairs(readings, "water"), [
+    [0, 10],
+    [1_200_000, 11],
+    [2_400_000, 12],
+  ]);
+});
+
+test("toSeriesPairs inserts one [midpoint, null] break for a gap over the threshold", () => {
+  // 6h = 21600s. A 21601s gap exceeds the threshold; a 21600s gap does not.
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 21_601, water: 12 },
+  ];
+  assert.deepEqual(toSeriesPairs(readings, "water"), [
+    [0, 10],
+    [Math.floor((0 + 21_601_000) / 2), null],
+    [21_601_000, 12],
+  ]);
+});
+
+test("toSeriesPairs does not break on a gap exactly equal to the threshold", () => {
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 21_600, water: 12 }, // exactly 6h
+  ];
+  assert.deepEqual(toSeriesPairs(readings, "water"), [
+    [0, 10],
+    [21_600_000, 12],
+  ]);
+});
+
+test("toSeriesPairs keeps an isolated reading (break before and after) as a pair", () => {
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 30_000, water: 11 }, // big gap before and after (>6h each)
+    { epoch: 60_000, water: 12 },
+  ];
+  const out = toSeriesPairs(readings, "water");
+  // The middle reading survives as a real pair amid the null breaks.
+  assert.ok(out.some((item) => item[0] === 30_000_000 && item[1] === 11));
+  // Two breaks inserted (one before, one after the middle reading).
+  assert.equal(out.filter((item) => item[1] === null).length, 2);
+});
+
+test("toSeriesPairs passes through a null field value as [ms, null]", () => {
+  const readings = [
+    { epoch: 0, air: 20 },
+    { epoch: 1200, air: null }, // water-only row: no air
+  ];
+  assert.deepEqual(toSeriesPairs(readings, "air"), [
+    [0, 20],
+    [1_200_000, null],
+  ]);
+});
+
+test("toSeriesPairs respects a custom gapBreakMs", () => {
+  const readings = [
+    { epoch: 0, water: 10 },
+    { epoch: 120, water: 11 }, // +2 min
+  ];
+  // 1-minute threshold → 2-min gap breaks.
+  const out = toSeriesPairs(readings, "water", 60 * 1000);
+  assert.equal(out.filter((item) => item[1] === null).length, 1);
+});
+
+test("waterStats returns min/max/avg over non-null water values", () => {
+  const s = waterStats([
+    { water: 14 }, { water: 18 }, { water: 16 },
+  ]);
+  assert.equal(s.min, 14);
+  assert.equal(s.max, 18);
+  assert.equal(s.avg, 16);
+});
+
+test("waterStats ignores null water values", () => {
+  const s = waterStats([{ water: 15 }, { water: null }, { water: 17 }]);
+  assert.equal(s.min, 15);
+  assert.equal(s.max, 17);
+  assert.equal(s.avg, 16);
+});
+
+test("waterStats returns null when no usable values", () => {
+  assert.equal(waterStats([]), null);
+  assert.equal(waterStats([{ water: null }, { water: null }]), null);
+});
+
+test("waterStats with a single reading gives min=max=avg", () => {
+  const s = waterStats([{ water: 16.5 }]);
+  assert.deepEqual(s, { min: 16.5, max: 16.5, avg: 16.5 });
+});
+
+test("isStale is false just under the threshold", () => {
+  // 1h 59m old, threshold 2h
+  assert.equal(isStale(1000, 1000 + 7140, 7200), false);
+});
+
+test("isStale is true past the threshold", () => {
+  // 2h 1m old, threshold 2h
+  assert.equal(isStale(1000, 1000 + 7260, 7200), true);
+});
+
+test("isStale is false exactly at the threshold (strict >)", () => {
+  assert.equal(isStale(1000, 1000 + 7200, 7200), false);
+});
+
+test("isStale is false when latestEpoch is missing", () => {
+  assert.equal(isStale(null, 99999, 7200), false);
+  assert.equal(isStale(undefined, 99999, 7200), false);
+});
+
+test("humanizeAge renders minutes under an hour", () => {
+  assert.equal(humanizeAge(0), "0 min");
+  assert.equal(humanizeAge(59 * 60), "59 min");
+});
+
+test("humanizeAge rolls into hours at 60 minutes", () => {
+  assert.equal(humanizeAge(60 * 60), "1 t");
+  assert.equal(humanizeAge(23 * 3600), "23 t");
+});
+
+test("humanizeAge rolls into days at 24 hours", () => {
+  assert.equal(humanizeAge(24 * 3600), "1 d");
+  assert.equal(humanizeAge(3 * 86400), "3 d");
+});
+
+test("humanizeAge guards negative/null input", () => {
+  assert.equal(humanizeAge(-10), "0 min");
+  assert.equal(humanizeAge(null), "0 min");
+});
+
+// Input is the bearing the wind comes FROM; the arrow shows where it blows TO
+// (180° opposite).
+test("degToArrow points opposite the source bearing (flow direction)", () => {
+  assert.equal(degToArrow(0), "↓");   // from N → blows S
+  assert.equal(degToArrow(45), "↙");  // from NE → blows SW
+  assert.equal(degToArrow(90), "←");  // from E → blows W
+  assert.equal(degToArrow(135), "↖"); // from SE → blows NW
+  assert.equal(degToArrow(180), "↑"); // from S → blows N
+  assert.equal(degToArrow(225), "↗"); // from SW → blows NE
+  assert.equal(degToArrow(270), "→"); // from W → blows E
+  assert.equal(degToArrow(315), "↘"); // from NW → blows SE
+});
+
+test("degToArrow wraps around north", () => {
+  assert.equal(degToArrow(360), "↓"); // from N → blows S
+  assert.equal(degToArrow(359), "↓");
+  assert.equal(degToArrow(338), "↓"); // ≈ from N → blows S
+});
+
+test("degToArrow rounds to the nearest sector", () => {
+  assert.equal(degToArrow(22.5), "↙"); // boundary rounds up
+  assert.equal(degToArrow(60), "↙");   // from ~NE → blows SW
+  assert.equal(degToArrow(78), "←");   // from ~E → blows W
+  assert.equal(degToArrow(237), "↗");  // the value seen in the live tooltip (from SW → blows NE)
+});
+
+test("degToArrow returns null for missing/invalid input", () => {
+  assert.equal(degToArrow(null), null);
+  assert.equal(degToArrow(undefined), null);
+  assert.equal(degToArrow(NaN), null);
+});
+
+// waterTrend(readings, sampleSize): net change across the (oldest-first) range,
+// mean of the last `sampleSize` readings minus the mean of the first.
+test("waterTrend reports a warming delta over the period (smoothed ends)", () => {
+  // first-2 mean = 11, last-2 mean = 17 → +6
+  const t = waterTrend(
+    [{ water: 10 }, { water: 12 }, { water: 16 }, { water: 18 }],
+    2,
+  );
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 6) < 1e-9);
+});
+
+test("waterTrend reports a cooling delta", () => {
+  // first-2 mean = 17, last-2 mean = 11 → -6
+  const t = waterTrend(
+    [{ water: 18 }, { water: 16 }, { water: 12 }, { water: 10 }],
+    2,
+  );
+  assert.equal(t.direction, "down");
+  assert.ok(Math.abs(t.delta + 6) < 1e-9);
+});
+
+test("waterTrend smoothing dampens a single end spike", () => {
+  // last-2 mean = (16+20)/2 = 18 vs first-2 mean = 16 → +2 (a raw last-vs-first
+  // would have read +4 off the 20° spike)
+  const t = waterTrend(
+    [{ water: 16 }, { water: 16 }, { water: 16 }, { water: 20 }],
+    2,
+  );
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 2) < 1e-9);
+});
+
+test("waterTrend is flat when the smoothed delta rounds to zero", () => {
+  // first-2 mean = 16.02, last-2 mean = 15.99 → -0.03 → flat
+  const t = waterTrend(
+    [{ water: 16.0 }, { water: 16.04 }, { water: 15.98 }, { water: 16.0 }],
+    2,
+  );
+  assert.equal(t.direction, "flat");
+});
+
+test("waterTrend caps the sample at half the readings (no overlap)", () => {
+  // only 2 usable → sample narrows to 1 each end → plain first-vs-last
+  const t = waterTrend([{ water: 14 }, { water: 15 }], 3);
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 1) < 1e-9);
+});
+
+test("waterTrend skips null-water readings", () => {
+  // usable = [10, 14]; sample narrows to 1 each end → +4
+  const t = waterTrend(
+    [{ water: 10 }, { water: null }, { water: 14 }],
+    1,
+  );
+  assert.equal(t.direction, "up");
+  assert.ok(Math.abs(t.delta - 4) < 1e-9);
+});
+
+test("waterTrend returns null with fewer than two usable readings", () => {
+  assert.equal(waterTrend([], 3), null);
+  assert.equal(waterTrend([{ water: 15 }], 3), null);
+  assert.equal(waterTrend([{ water: null }, { water: 16 }], 3), null);
 });
