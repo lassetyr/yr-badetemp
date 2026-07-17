@@ -94,9 +94,9 @@ export function toRow(reading, locationId) {
 }
 
 // Pull the forward air/wind timeseries from a met.no Locationforecast 2.0
-// response, as ascending {epoch, air, windSpeed}. Entries without a numeric
+// response, as ascending {epoch, air, windSpeed, windDir}. Entries without a numeric
 // air_temperature are skipped (they can't drive the relaxation model); windSpeed
-// falls back to null. Unlike extractForecast (which keeps only hour 0), this
+// and windDir fall back to null. Unlike extractForecast (which keeps only hour 0), this
 // returns every entry — the projection roll-forward bounds it to the horizon.
 export function extractForecastSeries(json) {
   const series = json?.properties?.timeseries;
@@ -108,7 +108,7 @@ export function extractForecastSeries(json) {
     if (air == null) continue;
     const epoch = Math.floor(Date.parse(entry.time) / 1000);
     if (!Number.isFinite(epoch)) continue;
-    out.push({ epoch, air, windSpeed: num(details?.wind_speed) });
+    out.push({ epoch, air, windSpeed: num(details?.wind_speed), windDir: num(details?.wind_from_direction) });
   }
   return out;
 }

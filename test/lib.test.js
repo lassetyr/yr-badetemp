@@ -231,22 +231,24 @@ test("buildRow nulls air/wind when forecast is null (weather fetch failed)", () 
 const METNO_SAMPLE = {
   properties: {
     timeseries: [
-      { time: "2026-07-17T10:00:00Z", data: { instant: { details: { air_temperature: 21.0, wind_speed: 2.5 } } } },
-      { time: "2026-07-17T11:00:00Z", data: { instant: { details: { air_temperature: 21.6, wind_speed: 3.1 } } } },
+      { time: "2026-07-17T10:00:00Z", data: { instant: { details: { air_temperature: 21.0, wind_speed: 2.5, wind_from_direction: 180 } } } },
+      { time: "2026-07-17T11:00:00Z", data: { instant: { details: { air_temperature: 21.6, wind_speed: 3.1 } } } }, // no direction → windDir null
       { time: "2026-07-17T12:00:00Z", data: { instant: { details: {} } } }, // no air → skipped
     ],
   },
 };
 
-test("extractForecastSeries returns ascending {epoch,air,windSpeed}, skipping entries with no air", () => {
+test("extractForecastSeries returns ascending {epoch,air,windSpeed,windDir}, skipping entries with no air", () => {
   const series = extractForecastSeries(METNO_SAMPLE);
   assert.equal(series.length, 2);
   assert.deepEqual(series[0], {
     epoch: Math.floor(Date.parse("2026-07-17T10:00:00Z") / 1000),
     air: 21.0,
     windSpeed: 2.5,
+    windDir: 180,
   });
   assert.equal(series[1].air, 21.6);
+  assert.equal(series[1].windDir, null); // absent wind_from_direction → null
   assert.ok(series[0].epoch < series[1].epoch);
 });
 
