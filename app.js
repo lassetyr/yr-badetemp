@@ -202,8 +202,28 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
           minute: "2-digit",
         });
         const header = `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
-        const rows = params
-          .filter((s) => !s.seriesName.startsWith("_")) // hide band helper series
+        // One row per metric: prefer the observed value, fall back to the
+        // forecast value where there's no observation (the future region). This
+        // avoids duplicate observed/"(prognose)" rows at the seam, where the
+        // forecast's connecting seed shares the last observed timestamp.
+        const byName = new Map(
+          params
+            .filter((s) => !s.seriesName.startsWith("_")) // drop band helper series
+            .map((s) => [s.seriesName, s]),
+        );
+        const pick = (observed, forecast) => {
+          const o = byName.get(observed);
+          if (o && o.value?.[1] != null) return o;
+          const f = byName.get(forecast);
+          if (f && f.value?.[1] != null) return f;
+          return null;
+        };
+        const rows = [
+          pick("Vann", "Vann (prognose)"),
+          pick("Luft", "Luft (prognose)"),
+          pick("Vind", "Vind (prognose)"),
+        ]
+          .filter(Boolean)
           .map((s) => {
             const raw = s.value?.[1];
             const unit = SERIES_UNIT[s.seriesName] ?? "";
