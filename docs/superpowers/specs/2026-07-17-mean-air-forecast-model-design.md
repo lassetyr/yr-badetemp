@@ -174,6 +174,23 @@ not new behavior. `npm test` stays green.
 to the human): confirm the fetched history spans ~`FIT_WINDOW_DAYS`, not ~11
 days, and that a projection is still produced.
 
+## Known trade-offs (experimental — revisit later)
+
+This model is an experiment; we may reconsider either point once we have more
+history and a real cold-front episode to backtest against.
+
+- **No seasonal warming.** Dropping `c` means the no-intercept equilibrium is
+  `mean-air + b·windSpeed/a`. During a calm, sunny spell with stable air the
+  projection will *not* keep water gently warming the way the old `+c` drift did.
+  We trade that away for honest response to sustained air changes; the current
+  backtest did not punish it, but it is a real behavioral change to watch.
+- **Deliberately more aggressive.** The mean-air coupling reacts more strongly to
+  forecasted air moves, and our only objective test (the walk-forward backtest)
+  covers a *stable* window with no front — so it cannot fully vet the reactive
+  behavior. Expect a wider +48h band and accept that a future projection may
+  overshoot a *transient* air dip. Reconsider the smoothing window / whether to
+  reintroduce a regularized `c` if overshoot shows up in practice.
+
 ## Out of scope
 
 - Any change to `app.js`, `src/data.js`, `index.html`, or `supabase/schema.sql`
