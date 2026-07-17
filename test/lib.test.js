@@ -231,22 +231,24 @@ test("buildRow nulls air/wind when forecast is null (weather fetch failed)", () 
 const METNO_SAMPLE = {
   properties: {
     timeseries: [
-      { time: "2026-07-17T10:00:00Z", data: { instant: { details: { air_temperature: 21.0, wind_speed: 2.5 } } } },
-      { time: "2026-07-17T11:00:00Z", data: { instant: { details: { air_temperature: 21.6, wind_speed: 3.1 } } } },
+      { time: "2026-07-17T10:00:00Z", data: { instant: { details: { air_temperature: 21.0, wind_speed: 2.5, wind_from_direction: 180 } } } },
+      { time: "2026-07-17T11:00:00Z", data: { instant: { details: { air_temperature: 21.6, wind_speed: 3.1 } } } }, // no direction → windDir null
       { time: "2026-07-17T12:00:00Z", data: { instant: { details: {} } } }, // no air → skipped
     ],
   },
 };
 
-test("extractForecastSeries returns ascending {epoch,air,windSpeed}, skipping entries with no air", () => {
+test("extractForecastSeries returns ascending {epoch,air,windSpeed,windDir}, skipping entries with no air", () => {
   const series = extractForecastSeries(METNO_SAMPLE);
   assert.equal(series.length, 2);
   assert.deepEqual(series[0], {
     epoch: Math.floor(Date.parse("2026-07-17T10:00:00Z") / 1000),
     air: 21.0,
     windSpeed: 2.5,
+    windDir: 180,
   });
   assert.equal(series[1].air, 21.6);
+  assert.equal(series[1].windDir, null); // absent wind_from_direction → null
   assert.ok(series[0].epoch < series[1].epoch);
 });
 
@@ -394,4 +396,25 @@ test("buildProjection falls back to flat persistence on a non-physical fit", () 
   // projected centers are flat at the seed water despite wild air/wind
   assert.equal(p.points[1].water, p.points[0].water);
   assert.equal(p.points[2].water, p.points[0].water);
+});
+
+test("buildProjection attaches air/windSpeed/windDir (seed from history, rest from the forecast)", () => {
+  const history = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 400 });
+  const seed = history[history.length - 1];
+  seed.windDir = 210; // last observed reading carries a bearing
+  const forecastSeries = Array.from({ length: 3 }, (_, i) => ({
+    epoch: seed.epoch + (i + 1) * 3600,
+    air: 18 + i,
+    windSpeed: 4 + i,
+    windDir: 90 + i,
+  }));
+  const p = buildProjection(history, forecastSeries);
+  // seed point carries the last observed values
+  assert.equal(p.points[0].air, seed.air);
+  assert.equal(p.points[0].windSpeed, seed.windSpeed);
+  assert.equal(p.points[0].windDir, 210);
+  // first forecast point carries the forecast entry's values
+  assert.equal(p.points[1].air, 18);
+  assert.equal(p.points[1].windSpeed, 4);
+  assert.equal(p.points[1].windDir, 90);
 });

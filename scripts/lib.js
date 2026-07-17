@@ -94,9 +94,9 @@ export function toRow(reading, locationId) {
 }
 
 // Pull the forward air/wind timeseries from a met.no Locationforecast 2.0
-// response, as ascending {epoch, air, windSpeed}. Entries without a numeric
+// response, as ascending {epoch, air, windSpeed, windDir}. Entries without a numeric
 // air_temperature are skipped (they can't drive the relaxation model); windSpeed
-// falls back to null. Unlike extractForecast (which keeps only hour 0), this
+// and windDir fall back to null. Unlike extractForecast (which keeps only hour 0), this
 // returns every entry — the projection roll-forward bounds it to the horizon.
 export function extractForecastSeries(json) {
   const series = json?.properties?.timeseries;
@@ -108,7 +108,7 @@ export function extractForecastSeries(json) {
     if (air == null) continue;
     const epoch = Math.floor(Date.parse(entry.time) / 1000);
     if (!Number.isFinite(epoch)) continue;
-    out.push({ epoch, air, windSpeed: num(details?.wind_speed) });
+    out.push({ epoch, air, windSpeed: num(details?.wind_speed), windDir: num(details?.wind_from_direction) });
   }
   return out;
 }
@@ -274,11 +274,31 @@ export function buildProjection(history, forecastSeries, opts = {}) {
   const seed = history[history.length - 1];
   const rolled = rollForward({ epoch: seed.epoch, water: seed.water }, forecastSeries, coeffs, { horizonH });
   const err = backtestError(history, coeffs, BACKTEST_HORIZONS);
-  const points = [{ epoch: seed.epoch, water: round1(seed.water), lower: round1(seed.water), upper: round1(seed.water) }];
+  // The met.no air/wind/dir driving each forecast timestamp, so the browser can
+  // draw them as forward lines. Keyed by epoch to match each rolled point.
+  const weather = new Map(forecastSeries.map((f) => [f.epoch, f]));
+  const points = [{
+    epoch: seed.epoch,
+    water: round1(seed.water),
+    lower: round1(seed.water),
+    upper: round1(seed.water),
+    air: seed.air ?? null,
+    windSpeed: seed.windSpeed ?? null,
+    windDir: seed.windDir ?? null,
+  }];
   for (const p of rolled) {
     const h = (p.epoch - seed.epoch) / 3600;
     const e = INFLATE * interpError(err, h);
-    points.push({ epoch: p.epoch, water: round1(p.water), lower: round1(p.water - e), upper: round1(p.water + e) });
+    const w = weather.get(p.epoch);
+    points.push({
+      epoch: p.epoch,
+      water: round1(p.water),
+      lower: round1(p.water - e),
+      upper: round1(p.water + e),
+      air: w?.air ?? null,
+      windSpeed: w?.windSpeed ?? null,
+      windDir: w?.windDir ?? null,
+    });
   }
   return {
     horizonH,
