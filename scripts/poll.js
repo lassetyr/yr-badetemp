@@ -155,27 +155,37 @@ async function pollUnofficial() {
 }
 
 // Fetch the recent reading history for the fit (oldest-first), mapped to the
-// camelCase shape the model helpers expect. Returns [] on any failure.
+// camelCase shape the model helpers expect. Paginates so the fit sees the whole
+// FIT_WINDOW_DAYS window rather than Supabase's default 1000-row read cap.
+// Returns [] on any failure.
 async function fetchHistory() {
   const cutoff = Math.floor(Date.now() / 1000) - FIT_WINDOW_DAYS * 86400;
-  const url =
-    `${SUPABASE_URL}/rest/v1/readings` +
-    `?select=epoch,water,air,wind_speed,wind_dir&location_id=eq.${STORAGE_ID}` +
-    `&epoch=gte.${cutoff}&order=epoch.desc`;
-  // Fetch newest-first so Supabase's row cap drops the oldest rows (not the newest).
-  // We'll reverse the array below to restore oldest-first for the model.
+  const PAGE = 1000;
+  const MAX_PAGES = 50; // safety cap (50k rows ≫ any FIT_WINDOW_DAYS window)
+  const rows = [];
   try {
-    const res = await fetch(url, {
-      headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
-    });
-    if (!res.ok) {
-      console.error(`History query failed: ${res.status} ${res.statusText}`);
-      return [];
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const url =
+        `${SUPABASE_URL}/rest/v1/readings` +
+        `?select=epoch,water,air,wind_speed,wind_dir&location_id=eq.${STORAGE_ID}` +
+        `&epoch=gte.${cutoff}&order=epoch.desc&limit=${PAGE}&offset=${page * PAGE}`;
+      // Newest-first so a partial fetch keeps the most recent rows; reversed below.
+      const res = await fetch(url, {
+        headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
+      });
+      if (!res.ok) {
+        console.error(`History query failed: ${res.status} ${res.statusText}`);
+        return [];
+      }
+      const batch = await res.json();
+      rows.push(...batch);
+      if (batch.length < PAGE) break; // last page reached
     }
-    const rows = await res.json();
     // rows are newest-first (epoch.desc); reverse to oldest-first so the model
     // fits over consecutive pairs and buildProjection seeds from the newest row.
-    return rows.map((r) => ({ epoch: r.epoch, water: r.water, air: r.air, windSpeed: r.wind_speed, windDir: r.wind_dir })).reverse();
+    return rows
+      .map((r) => ({ epoch: r.epoch, water: r.water, air: r.air, windSpeed: r.wind_speed, windDir: r.wind_dir }))
+      .reverse();
   } catch (err) {
     console.error(`Network error fetching history: ${err.message}`);
     return [];
