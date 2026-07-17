@@ -397,3 +397,24 @@ test("buildProjection falls back to flat persistence on a non-physical fit", () 
   assert.equal(p.points[1].water, p.points[0].water);
   assert.equal(p.points[2].water, p.points[0].water);
 });
+
+test("buildProjection attaches air/windSpeed/windDir (seed from history, rest from the forecast)", () => {
+  const history = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 400 });
+  const seed = history[history.length - 1];
+  seed.windDir = 210; // last observed reading carries a bearing
+  const forecastSeries = Array.from({ length: 3 }, (_, i) => ({
+    epoch: seed.epoch + (i + 1) * 3600,
+    air: 18 + i,
+    windSpeed: 4 + i,
+    windDir: 90 + i,
+  }));
+  const p = buildProjection(history, forecastSeries);
+  // seed point carries the last observed values
+  assert.equal(p.points[0].air, seed.air);
+  assert.equal(p.points[0].windSpeed, seed.windSpeed);
+  assert.equal(p.points[0].windDir, 210);
+  // first forecast point carries the forecast entry's values
+  assert.equal(p.points[1].air, 18);
+  assert.equal(p.points[1].windSpeed, 4);
+  assert.equal(p.points[1].windDir, 90);
+});
