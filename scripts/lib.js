@@ -135,34 +135,27 @@ export function smoothAirSeries(series, windowH = SMOOTH_WINDOW_H) {
   });
 }
 
-// 3x3 determinant.
-function det3(m) {
-  return (
-    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
-    m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
-    m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
-  );
-}
-
-// Solve Ax = y for a 3x3 A by Cramer's rule. Returns [x0,x1,x2] or null when the
+// Solve a 2x2 system Ax = y by Cramer's rule. Returns [x0,x1] or null when the
 // system is singular/near-singular.
-function solve3(A, y) {
-  const d = det3(A);
+function solve2(A, y) {
+  const d = A[0][0] * A[1][1] - A[0][1] * A[1][0];
   if (!Number.isFinite(d) || Math.abs(d) < 1e-12) return null;
-  const withCol = (j) => A.map((row, i) => row.map((v, k) => (k === j ? y[i] : v)));
-  return [det3(withCol(0)) / d, det3(withCol(1)) / d, det3(withCol(2)) / d];
+  return [
+    (y[0] * A[1][1] - A[0][1] * y[1]) / d,
+    (A[0][0] * y[1] - y[0] * A[1][0]) / d,
+  ];
 }
 
-// Least-squares fit of dWater/dt = a*(air-water) + b*windSpeed + c over
+// Least-squares fit of dWater/dt = a*(air-water) + b*windSpeed (no intercept) over
 // consecutive reading pairs. Only pairs with a sane time gap and all predictors
-// present contribute. Returns {a,b,c,n,ok}; ok gates the caller into the
+// present contribute. Returns {a,b,c,n,ok} where c is always 0; ok gates the caller into the
 // persistence fallback when the fit is untrustworthy or non-physical (a<=0).
 export function fitRelaxation(readings, opts = {}) {
   const minGap = opts.minGapS ?? MIN_GAP_S;
   const maxGap = opts.maxGapS ?? MAX_GAP_S;
   const minPairs = opts.minPairs ?? MIN_PAIRS;
-  const S = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-  const rhs = [0, 0, 0];
+  const S = [[0, 0], [0, 0]];
+  const rhs = [0, 0];
   let n = 0;
   for (let i = 0; i < readings.length - 1; i++) {
     const r0 = readings[i];
@@ -172,19 +165,19 @@ export function fitRelaxation(readings, opts = {}) {
     if (r0.water == null || r1.water == null || r0.air == null || r0.windSpeed == null) continue;
     const dtH = gap / 3600;
     const rate = (r1.water - r0.water) / dtH;
-    const x = [r0.air - r0.water, r0.windSpeed, 1];
-    for (let a = 0; a < 3; a++) {
-      for (let b = 0; b < 3; b++) S[a][b] += x[a] * x[b];
+    const x = [r0.air - r0.water, r0.windSpeed]; // no intercept column
+    for (let a = 0; a < 2; a++) {
+      for (let b = 0; b < 2; b++) S[a][b] += x[a] * x[b];
       rhs[a] += x[a] * rate;
     }
     n++;
   }
   if (n < minPairs) return { a: 0, b: 0, c: 0, n, ok: false };
-  const sol = solve3(S, rhs);
+  const sol = solve2(S, rhs);
   if (!sol) return { a: 0, b: 0, c: 0, n, ok: false };
-  const [a, b, c] = sol;
-  const ok = Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(c) && a > 0;
-  return { a: ok ? a : 0, b: ok ? b : 0, c: ok ? c : 0, n, ok };
+  const [a, b] = sol;
+  const ok = Number.isFinite(a) && Number.isFinite(b) && a > 0;
+  return { a: ok ? a : 0, b: ok ? b : 0, c: 0, n, ok };
 }
 
 // Integrate dWater/dt = a*(air-water) + b*windSpeed + c forward from `seed`

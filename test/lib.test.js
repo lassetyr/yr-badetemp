@@ -276,13 +276,21 @@ function synthReadings({ a, b, c, n, dtS = 1200, w0 = 15, epoch0 = 1_700_000_000
   return readings;
 }
 
-test("fitRelaxation recovers the coefficients that generated the data", () => {
-  const r = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 300 });
+test("fitRelaxation recovers a and b and always reports c:0", () => {
+  // Data generated with c:0 (no intercept), so an intercept-free fit must recover a,b.
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0, n: 300 });
   const fit = fitRelaxation(r);
   assert.ok(fit.ok);
   assert.ok(Math.abs(fit.a - 0.05) < 1e-3, `a=${fit.a}`);
   assert.ok(Math.abs(fit.b - 0.01) < 1e-3, `b=${fit.b}`);
-  assert.ok(Math.abs(fit.c - -0.002) < 1e-3, `c=${fit.c}`);
+  assert.equal(fit.c, 0); // the model no longer fits an intercept
+});
+
+test("fitRelaxation never fits an intercept even when the data drifts", () => {
+  // True rate carries a +0.05/h drift the model cannot represent; c must stay 0.
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0.05, n: 300 });
+  const fit = fitRelaxation(r);
+  assert.equal(fit.c, 0);
 });
 
 test("fitRelaxation returns ok:false below MIN_PAIRS usable pairs", () => {
