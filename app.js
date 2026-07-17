@@ -1,6 +1,8 @@
 import {
   readingsQueryUrl,
   latestReadingUrl,
+  forecastQueryUrl,
+  mapForecast,
   mapRow,
   rangeBounds,
   toSeriesPairs,
@@ -22,6 +24,7 @@ const STALE_THRESHOLD_SEC = 2 * 3600; // header "utdatert" badge
 const TREND_SAMPLE = 3; // readings averaged at each end for the period trend
 let allReadings = [];
 let latest = null;
+let forecast = null; // { line, lower, band } | null — the stored 48h projection
 let refreshTimerId = null;
 
 // Which chart series are toggled on/off in the legend, persisted across reloads.
@@ -66,7 +69,7 @@ const nf1 = new Intl.NumberFormat("nb-NO", {
 });
 
 // Unit shown after each series value in the tooltip.
-const SERIES_UNIT = { Vann: "°C", Luft: "°C", Vind: "m/s" };
+const SERIES_UNIT = { Vann: "°C", Luft: "°C", Vind: "m/s", "Vann (prognose)": "°C" };
 
 // Format an ISO time string in Norwegian time (Europe/Oslo), independent of
 // the viewer's device timezone. Returns the requested date/time parts by name.
@@ -80,7 +83,7 @@ function osloParts(isoTime, opts) {
     .reduce((acc, part) => ((acc[part.type] = part.value), acc), {});
 }
 
-function buildOption(readings, rangeKey, nowEpochSec) {
+function buildOption(readings, forecast, rangeKey, nowEpochSec) {
   const bounds = rangeBounds(rangeKey, nowEpochSec);
   const reducedMotion = window.matchMedia(
     "(prefers-reduced-motion: reduce)",
@@ -104,6 +107,7 @@ function buildOption(readings, rangeKey, nowEpochSec) {
         });
         const header = `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
         const rows = params
+          .filter((s) => !s.seriesName.startsWith("_")) // hide band helper series
           .map((s) => {
             const raw = s.value?.[1];
             const unit = SERIES_UNIT[s.seriesName] ?? "";
@@ -220,6 +224,47 @@ function buildOption(readings, rangeKey, nowEpochSec) {
         lineStyle: { width: 1.5, color: "#94a3b8", type: "dashed" },
         itemStyle: { color: "#94a3b8" },
       },
+      ...(forecast
+        ? [
+            // Transparent baseline at `lower`; the band area stacks on top of it.
+            {
+              name: "_prognoseLo",
+              type: "line",
+              stack: "prognose-band",
+              yAxisIndex: 0,
+              data: forecast.lower,
+              showSymbol: false,
+              silent: true,
+              lineStyle: { opacity: 0 },
+              z: 1,
+            },
+            // Shaded band = (upper - lower) stacked above `lower`, spanning [lower,upper].
+            {
+              name: "_prognoseBand",
+              type: "line",
+              stack: "prognose-band",
+              yAxisIndex: 0,
+              data: forecast.band,
+              showSymbol: false,
+              silent: true,
+              lineStyle: { opacity: 0 },
+              areaStyle: { color: "rgba(14,165,233,0.15)" },
+              z: 1,
+            },
+            // Dashed projection line in the water color, continuing the solid line.
+            {
+              name: "Vann (prognose)",
+              type: "line",
+              smooth: true,
+              showSymbol: false,
+              yAxisIndex: 0,
+              data: forecast.line,
+              lineStyle: { width: 2, color: "#0ea5e9", type: "dashed" },
+              itemStyle: { color: "#0ea5e9" },
+              z: 3,
+            },
+          ]
+        : []),
     ],
   };
 }
@@ -234,7 +279,7 @@ function render() {
     return;
   }
   empty.hidden = true;
-  chart.setOption(buildOption(allReadings, currentRange, nowEpoch()), true);
+  chart.setOption(buildOption(allReadings, forecast, currentRange, nowEpoch()), true);
   updateTrend();
   updateStats();
 }
@@ -382,9 +427,26 @@ async function loadLatest() {
   return true;
 }
 
-// Refresh both the header (latest reading) and the chart (selected range).
+// Fetch the stored projection for the dashed forecast line + band. On failure,
+// leave the existing projection (or its absence) intact — never blank the chart.
+async function loadForecast() {
+  try {
+    const res = await fetch(forecastQueryUrl(SUPABASE_URL, LOCATION_ID), {
+      cache: "no-store",
+      headers: SUPABASE_HEADERS,
+    });
+    if (!res.ok) return false;
+    const rows = await res.json();
+    forecast = mapForecast(rows[0]?.payload);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+// Refresh header (latest reading), chart (selected range), and projection.
 async function refresh() {
-  await Promise.all([loadLatest(), loadData()]);
+  await Promise.all([loadLatest(), loadData(), loadForecast()]);
 }
 
 function startRefreshTimer() {
@@ -411,7 +473,7 @@ document.addEventListener("visibilitychange", () => {
 
 async function init() {
   wireButtons();
-  const [, ok] = await Promise.all([loadLatest(), loadData()]);
+  const [, ok] = await Promise.all([loadLatest(), loadData(), loadForecast()]);
   // First load with no data: show the empty state explicitly.
   if (!ok) render();
   startRefreshTimer();
