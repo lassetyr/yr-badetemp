@@ -75,7 +75,14 @@ const nf1 = new Intl.NumberFormat("nb-NO", {
 });
 
 // Unit shown after each series value in the tooltip.
-const SERIES_UNIT = { Vann: "°C", Luft: "°C", Vind: "m/s", "Vann (prognose)": "°C" };
+const SERIES_UNIT = {
+  Vann: "°C",
+  Luft: "°C",
+  Vind: "m/s",
+  "Vann (prognose)": "°C",
+  "Luft (prognose)": "°C",
+  "Vind (prognose)": "m/s",
+};
 
 // Format an ISO time string in Norwegian time (Europe/Oslo), independent of
 // the viewer's device timezone. Returns the requested date/time parts by name.
@@ -87,6 +94,81 @@ function osloParts(isoTime, opts) {
   })
     .formatToParts(new Date(isoTime))
     .reduce((acc, part) => ((acc[part.type] = part.value), acc), {});
+}
+
+// Dashed forecast series for the clamped forecast `fc`, honoring the legend:
+// each line is drawn only when its observed counterpart is enabled (undefined
+// `selected` → all enabled). The water projection also carries its confidence
+// band as two silent helper series (names prefixed `_` are hidden from tooltip).
+function forecastSeries(fc, selected) {
+  if (!fc) return [];
+  const on = (name) => selected?.[name] !== false;
+  const out = [];
+  if (on("Vann")) {
+    out.push(
+      {
+        name: "_prognoseLo",
+        type: "line",
+        stack: "prognose-band",
+        yAxisIndex: 0,
+        data: fc.lower,
+        showSymbol: false,
+        silent: true,
+        lineStyle: { opacity: 0 },
+        z: 1,
+      },
+      {
+        name: "_prognoseBand",
+        type: "line",
+        stack: "prognose-band",
+        yAxisIndex: 0,
+        data: fc.band,
+        showSymbol: false,
+        silent: true,
+        lineStyle: { opacity: 0 },
+        areaStyle: { color: "rgba(14,165,233,0.15)" },
+        z: 1,
+      },
+      {
+        name: "Vann (prognose)",
+        type: "line",
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 0,
+        data: fc.line,
+        lineStyle: { width: 2, color: "#0ea5e9", type: "dashed" },
+        itemStyle: { color: "#0ea5e9" },
+        z: 3,
+      },
+    );
+  }
+  if (on("Luft")) {
+    out.push({
+      name: "Luft (prognose)",
+      type: "line",
+      smooth: true,
+      showSymbol: false,
+      yAxisIndex: 0,
+      data: fc.airLine,
+      lineStyle: { width: 2, color: "#f59e0b", type: "dashed" },
+      itemStyle: { color: "#f59e0b" },
+      z: 3,
+    });
+  }
+  if (on("Vind")) {
+    out.push({
+      name: "Vind (prognose)",
+      type: "line",
+      smooth: true,
+      showSymbol: false,
+      yAxisIndex: 1,
+      data: fc.windLine,
+      lineStyle: { width: 1.5, color: "#94a3b8", type: "dashed" },
+      itemStyle: { color: "#94a3b8" },
+      z: 3,
+    });
+  }
+  return out;
 }
 
 function buildOption(readings, forecast, rangeKey, nowEpochSec) {
@@ -130,6 +212,9 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
             if (s.seriesName === "Vind" && raw != null) {
               const r = byMs.get(s.value?.[0]);
               line += ` ${degToArrow(r?.windDir) ?? "-"}`;
+            }
+            if (s.seriesName === "Vind (prognose)" && raw != null) {
+              line += ` ${degToArrow(s.value?.[2]) ?? "-"}`; // bearing packed as the 3rd element
             }
             return line;
           })
@@ -235,50 +320,10 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
         showSymbol: false,
         yAxisIndex: 1,
         data: toSeriesPairs(readings, "windSpeed"),
-        lineStyle: { width: 1.5, color: "#94a3b8", type: "dashed" },
+        lineStyle: { width: 1.5, color: "#94a3b8" },
         itemStyle: { color: "#94a3b8" },
       },
-      ...(fc
-        ? [
-            // Transparent baseline at `lower`; the band area stacks on top of it.
-            {
-              name: "_prognoseLo",
-              type: "line",
-              stack: "prognose-band",
-              yAxisIndex: 0,
-              data: fc.lower,
-              showSymbol: false,
-              silent: true,
-              lineStyle: { opacity: 0 },
-              z: 1,
-            },
-            // Shaded band = (upper - lower) stacked above `lower`, spanning [lower,upper].
-            {
-              name: "_prognoseBand",
-              type: "line",
-              stack: "prognose-band",
-              yAxisIndex: 0,
-              data: fc.band,
-              showSymbol: false,
-              silent: true,
-              lineStyle: { opacity: 0 },
-              areaStyle: { color: "rgba(14,165,233,0.15)" },
-              z: 1,
-            },
-            // Dashed projection line in the water color, continuing the solid line.
-            {
-              name: "Vann (prognose)",
-              type: "line",
-              smooth: true,
-              showSymbol: false,
-              yAxisIndex: 0,
-              data: fc.line,
-              lineStyle: { width: 2, color: "#0ea5e9", type: "dashed" },
-              itemStyle: { color: "#0ea5e9" },
-              z: 3,
-            },
-          ]
-        : []),
+      ...forecastSeries(fc, legendSelected),
     ],
   };
 }
@@ -394,6 +439,7 @@ chart.on("legendselectchanged", (params) => {
   } catch {
     // ignore storage failures (private mode, quota)
   }
+  render(); // re-render so the forecast line follows its observed series' toggle
 });
 
 const SUPABASE_HEADERS = {
