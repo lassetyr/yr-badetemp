@@ -49,11 +49,20 @@ Two halves share pure helpers but never import each other:
   carrying water + air + wind) via `extractReading`/`toRow` — a temporary
   scaffold so data keeps flowing until the key lands; it is removed at cutover.
 - **Browser app** (`index.html` + `app.js` → `src/data.js` + `src/config.js`):
-  fetches the selected time range from Supabase's PostgREST endpoint and renders
-  with ECharts. `src/data.js` is pure (`readingsQueryUrl` builds the PostgREST
-  query URL for a location + range; `mapRow` converts a snake_case row to the
-  camelCase shape the chart consumes). Range filtering is server-side, so
+  fetches from Supabase's PostgREST endpoint and renders with ECharts. `app.js`
+  owns all I/O and DOM; `src/data.js` is pure and holds every derived/formatting
+  helper — URL builders (`readingsQueryUrl`, `latestReadingUrl`), the
+  snake_case→camelCase `mapRow`, and the glanceability logic (`waterStats`,
+  `waterTrend`, `isStale`, `humanizeAge`, `degToArrow`, `toSeriesPairs`). Each is
+  unit-tested in `test/data.test.js`. Range filtering is server-side, so
   switching range re-fetches rather than filtering in memory.
+
+  A refresh runs two independent queries in parallel (`refresh` in `app.js`):
+  `loadLatest` fetches the single newest reading for the header (so "current
+  temp" stays correct even when the selected window contains no readings), while
+  `loadData` fetches the selected range for the chart. Both fail soft — a
+  transient error leaves the existing header/chart intact rather than blanking
+  it.
 
 `lib.js` and `src/data.js` are deliberately I/O-free so the tests can exercise
 logic without network or DOM. When adding logic, put the pure part in those
