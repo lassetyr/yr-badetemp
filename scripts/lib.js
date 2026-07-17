@@ -284,13 +284,26 @@ function interpError(err, h) {
 // zero-width band so the dashed line joins the solid line at "now".
 export function buildProjection(history, forecastSeries, opts = {}) {
   const horizonH = opts.horizonH ?? HORIZON_H;
-  const fit = fitRelaxation(history);
-  const coeffs = fit.ok ? { a: fit.a, b: fit.b, c: fit.c } : { a: 0, b: 0, c: 0 };
+  const windowH = opts.smoothWindowH ?? SMOOTH_WINDOW_H;
   const seed = history[history.length - 1];
-  const rolled = rollForward({ epoch: seed.epoch, water: seed.water }, forecastSeries, coeffs, { horizonH });
-  const err = backtestError(history, coeffs, BACKTEST_HORIZONS);
-  // The met.no air/wind/dir driving each forecast timestamp, so the browser can
-  // draw them as forward lines. Keyed by epoch to match each rolled point.
+  // Fit and backtest on a history whose air is the trailing-mean driver, so the
+  // coupling reflects the slow signal water actually follows (not the diurnal wobble).
+  const smoothHist = smoothAirSeries(history, windowH);
+  const fit = fitRelaxation(smoothHist);
+  const coeffs = fit.ok ? { a: fit.a, b: fit.b, c: fit.c } : { a: 0, b: 0, c: 0 };
+  const err = backtestError(smoothHist, coeffs, BACKTEST_HORIZONS);
+  // Roll-forward driver: smooth air ACROSS THE SEAM so the first `windowH` hours
+  // of forecast average real observations rather than cold-starting. Concatenate
+  // the recent history tail with the forecast, smooth, then keep the forecast
+  // portion (its air is now the trailing mean; its wind stays the raw forecast wind).
+  const tail = history
+    .filter((r) => r.epoch > seed.epoch - windowH * 3600 && r.epoch <= seed.epoch)
+    .map((r) => ({ epoch: r.epoch, air: r.air, windSpeed: r.windSpeed }));
+  const combined = tail.concat(forecastSeries).sort((x, y) => x.epoch - y.epoch);
+  const smoothedForecast = smoothAirSeries(combined, windowH).filter((f) => f.epoch > seed.epoch);
+  const rolled = rollForward({ epoch: seed.epoch, water: seed.water }, smoothedForecast, coeffs, { horizonH });
+  // Displayed air/wind stay the RAW met.no forecast (smoothing is internal to the
+  // water model). Keyed by epoch to stamp each rolled point.
   const weather = new Map(forecastSeries.map((f) => [f.epoch, f]));
   const points = [{
     epoch: seed.epoch,
