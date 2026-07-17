@@ -11,6 +11,27 @@ directly via Supabase's PostgREST API. There is no server of our own — Supabas
 *is* the backend. The repo no longer stores data: `data/dulpen.ndjson` is a
 frozen historical backup of the pre-Supabase era (do not append to it).
 
+## Supabase setup (one-time, manual)
+
+There is no migration runner — the schema in `supabase/schema.sql` must be
+applied **by hand** in the Supabase SQL editor when the project is first set up
+(or ever rebuilt). It defines two tables, each with a Row Level Security
+`SELECT` policy granted to `anon` so the static chart can read them:
+
+- `readings` — the append-only observations.
+- `forecast` — the single-row-per-location projection the poller upserts.
+
+**Easy trap:** forgetting the `forecast` table (or its `anon` policy) fails
+*silently* — the poller's upsert 404s but is fail-soft (readings keep flowing),
+and the browser's read returns nothing, so **no** forecast line (water, air, or
+wind) is ever drawn even though everything else looks healthy. If projections
+don't show, verify the table and policy first:
+
+```sql
+select relrowsecurity from pg_class where relname = 'forecast';            -- expect: true
+select policyname, cmd, roles from pg_policies where tablename='forecast'; -- expect: "Public read access" | SELECT | {anon}
+```
+
 ## Commands
 
 ```bash
