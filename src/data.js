@@ -177,3 +177,19 @@ export function mapForecast(payload) {
   }
   return { line, lower, band };
 }
+
+// Trim a mapped forecast ({line,lower,band}) to a display horizon: keep only the
+// pairs at or before `nowEpochSec + maxHorizonH` hours. line/lower/band share
+// timestamps, so filtering each by the same cutoff keeps them consistent. Returns
+// null when there is nothing to draw (no forecast, or nothing within the horizon).
+export function clampForecast(forecast, nowEpochSec, maxHorizonH) {
+  if (!forecast || !forecast.line?.length) return null;
+  const cutoffMs = (nowEpochSec + maxHorizonH * 3600) * 1000;
+  const line = forecast.line.filter(([ms]) => ms <= cutoffMs);
+  if (line.length === 0) return null;
+  return {
+    line,
+    lower: forecast.lower.filter(([ms]) => ms <= cutoffMs),
+    band: forecast.band.filter(([ms]) => ms <= cutoffMs),
+  };
+}

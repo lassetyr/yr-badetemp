@@ -14,6 +14,7 @@ import {
   waterTrend,
   forecastQueryUrl,
   mapForecast,
+  clampForecast,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -384,4 +385,39 @@ test("mapForecast returns null for missing or empty payloads", () => {
   assert.equal(mapForecast(null), null);
   assert.equal(mapForecast({}), null);
   assert.equal(mapForecast({ points: [] }), null);
+});
+
+// Forecast as mapForecast emits it: line/lower/band share timestamps. Points at
+// now, +6h, +12h, +24h, +48h (nowEpochSec = 1000 → ms = epoch*1000).
+const FC_NOW = 1000;
+const FC = {
+  line:  [[1_000_000, 20], [22_600_000, 20.2], [44_200_000, 20.4], [87_400_000, 20.1], [173_800_000, 19.5]],
+  lower: [[1_000_000, 20], [22_600_000, 19.9], [44_200_000, 19.8], [87_400_000, 19.3], [173_800_000, 18.5]],
+  band:  [[1_000_000, 0],  [22_600_000, 0.6],  [44_200_000, 1.2],  [87_400_000, 1.6],  [173_800_000, 2.0]],
+};
+
+test("clampForecast keeps points within the horizon, drops those beyond, retains the seed", () => {
+  const c = clampForecast(FC, FC_NOW, 12); // cutoff = (1000 + 12*3600)*1000 = 44_200_000
+  assert.equal(c.line.length, 3);          // now, +6h, +12h (== cutoff, inclusive)
+  assert.deepEqual(c.line[0], [1_000_000, 20]);           // seed retained
+  assert.equal(c.line[c.line.length - 1][0], 44_200_000); // last drawn point at +12h
+  // line/lower/band clamped to the SAME timestamps
+  assert.deepEqual(c.lower.map((p) => p[0]), c.line.map((p) => p[0]));
+  assert.deepEqual(c.band.map((p) => p[0]), c.line.map((p) => p[0]));
+});
+
+test("clampForecast at the full 48h horizon keeps every point", () => {
+  const c = clampForecast(FC, FC_NOW, 48);
+  assert.equal(c.line.length, 5);
+});
+
+test("clampForecast returns null for a null or empty forecast", () => {
+  assert.equal(clampForecast(null, FC_NOW, 12), null);
+  assert.equal(clampForecast({ line: [], lower: [], band: [] }, FC_NOW, 12), null);
+});
+
+test("clampForecast returns null when nothing is within the horizon", () => {
+  // A forecast whose only point is +24h, viewed with a 12h horizon → all dropped.
+  const late = { line: [[87_400_000, 20]], lower: [[87_400_000, 19]], band: [[87_400_000, 1]] };
+  assert.equal(clampForecast(late, FC_NOW, 12), null);
 });
