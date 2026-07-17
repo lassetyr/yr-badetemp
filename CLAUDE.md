@@ -18,7 +18,9 @@ npm test                      # run all unit tests (node --test, Node 20+, zero 
 node --test test/lib.test.js  # run a single test file
 
 # Poller / import need Supabase credentials in the environment:
-YR_API_KEY=<key> SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/poll.js
+# YR_API_KEY is optional — set it to poll the official Yr API, omit it to fall
+# back to the unofficial endpoint (temporary scaffold until the key lands).
+[YR_API_KEY=<key>] SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/poll.js
 SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/import-history.js  # one-off backfill from the ndjson
 
 python3 -m http.server 8000   # serve the site locally → http://localhost:8000/
