@@ -91,9 +91,10 @@ Two halves share pure helpers but never import each other:
 - **Forecast** (`scripts/poll.js:updateForecast` → `scripts/lib.js`): each poll
   also builds a best-effort 48h water-temperature projection. `lib.js` fits a
   relaxation model `dWater/dt = a·(air−water) + b·wind` (no intercept, `c` always 0)
-  against a 24-hour trailing-mean air driver (`smoothAirSeries`, `SMOOTH_WINDOW_H`),
-  smoothing across the history→forecast seam so the early forecast averages real
-  observations rather than cold-starting (`fitRelaxation`). It rolls the projection
+  against a 24-hour trailing-mean air driver (`smoothAirSeries`, `SMOOTH_WINDOW_H`)
+  via `fitRelaxation`. `buildProjection` smooths that driver across the
+  history→forecast seam so the early forecast averages real observations rather
+  than cold-starting, then rolls the projection
   forward on the met.no forecast timeseries (`extractForecastSeries` → `rollForward`),
   sizes a confidence band from a walk-forward backtest (`backtestError`, inflated by
   `INFLATE=1.3` for forecast-input error), and assembles the payload (`buildProjection`).
