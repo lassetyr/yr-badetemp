@@ -67,24 +67,9 @@ async function fetchForecast() {
   return extractForecast(json);
 }
 
-async function main() {
-  if (!YR_API_KEY) {
-    console.error("Missing YR_API_KEY.");
-    return; // exit 0; next scheduled run retries
-  }
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.");
-    return;
-  }
-
-  const water = await fetchWater();
-  if (!water) {
-    console.error("No water temperature available; skipping insert.");
-    return; // water-anchored: no water, no row
-  }
-  const forecast = await fetchForecast(); // null → water-only row
-
-  const row = buildRow(water, forecast, STORAGE_ID);
+// Insert one row into Supabase. Returns true on success, false on any failure.
+// All failures are soft — the run exits 0 and the next scheduled poll retries.
+async function insertRow(row) {
   let insert;
   try {
     insert = await fetch(`${SUPABASE_URL}/rest/v1/readings`, {
@@ -101,15 +86,41 @@ async function main() {
     });
   } catch (err) {
     console.error(`Network error inserting reading: ${err.message}`);
-    return;
+    return false;
   }
   if (!insert.ok) {
     console.error(`Insert failed: ${insert.status} ${insert.statusText}`);
+    return false;
+  }
+  return true;
+}
+
+// Official path: Yr water (anchor) + met.no weather (optional). Returns a
+// ready-to-insert row, or null when there is no water reading this poll.
+async function pollOfficial() {
+  console.log("Polling via official API");
+  const water = await fetchWater();
+  if (!water) {
+    console.error("No water temperature available; skipping insert.");
+    return null; // water-anchored: no water, no row
+  }
+  const forecast = await fetchForecast(); // null → water-only row
+  return buildRow(water, forecast, STORAGE_ID);
+}
+
+async function main() {
+  if (!YR_API_KEY) {
+    console.error("Missing YR_API_KEY.");
+    return; // exit 0; next scheduled run retries
+  }
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.");
     return;
   }
-  console.log(
-    `Inserted reading: water=${water.temperature}C at ${water.time} (air=${forecast?.air ?? "n/a"})`,
-  );
+  const row = await pollOfficial();
+  if (!row) return;
+  const ok = await insertRow(row);
+  if (ok) console.log(`Inserted reading: water=${row.water}C at ${row.time}`);
 }
 
 main().catch((err) => {
