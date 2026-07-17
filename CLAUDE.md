@@ -42,6 +42,10 @@ Two halves share pure helpers but never import each other:
   `extractForecast` pulls instant air/wind from the met.no response, `buildRow`
   maps them to the snake_case DB row. Failures `return` rather than throw — the
   run exits 0, and a met.no blip still yields a water-only row (air/wind null).
+  When `YR_API_KEY` is unset the poller instead falls back to the pre-transition
+  unofficial GeoJSON endpoint (`www.yr.no/api/v0/watertemperatures/...`, one call
+  carrying water + air + wind) via `extractReading`/`toRow` — a temporary
+  scaffold so data keeps flowing until the key lands; it is removed at cutover.
 - **Browser app** (`index.html` + `app.js` → `src/data.js` + `src/config.js`):
   fetches the selected time range from Supabase's PostgREST endpoint and renders
   with ECharts. `src/data.js` is pure (`readingsQueryUrl` builds the PostgREST
@@ -94,8 +98,8 @@ congested scheduler slots.
   badetemperaturer.yr.no), and `LAT`/`LON` in `scripts/poll.js`. `STORAGE_ID`
   (`"0-10238"`) is also the read-query id in `app.js`. The water + forecast
   endpoint URLs and `MET_USER_AGENT` are constants in `scripts/poll.js`.
-- Secrets: `YR_API_KEY` (official water API, GitHub Actions secret + local env),
-  plus the existing `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
+- Secrets: `YR_API_KEY` (official water API; **optional** — unset falls back to
+  the unofficial endpoint), plus `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
 - Browser refresh cadence: `REFRESH_MS` in `app.js` (auto-refetches without page
   reload; pauses while the tab is hidden).
 - Poll cadence: the `cron` in `.github/workflows/poll.yml` and the external

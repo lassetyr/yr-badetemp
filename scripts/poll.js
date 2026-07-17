@@ -1,4 +1,10 @@
-import { extractOfficialWater, extractForecast, buildRow } from "./lib.js";
+import {
+  extractOfficialWater,
+  extractForecast,
+  buildRow,
+  extractReading,
+  toRow,
+} from "./lib.js";
 
 // --- Tracked spot -----------------------------------------------------------
 const STORAGE_ID = "0-10238"; // written to readings.location_id (history continuity)
@@ -13,6 +19,12 @@ const WATER_API_URL = `https://badetemperaturer.yr.no/api/locations/${QUERY_ID}/
 const FORECAST_API_URL = `https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${LAT}&lon=${LON}`;
 const MET_USER_AGENT =
   "yr-badetemp/1.0 (github.com/lassetyr/yr-badetemp; lassetyr@gmail.com)";
+
+// --- Unofficial fallback (delete once YR_API_KEY is verified live) -----------
+// Undocumented internal endpoint used before the official-API transition. Its
+// GeoJSON carries water + air + wind in one response (no met.no call needed).
+const LEGACY_API_URL = "https://www.yr.no/api/v0/watertemperatures/10/541/300";
+const LOCATION_ID = "0-10238"; // feature match in the GeoJSON; same as STORAGE_ID
 
 // --- Secrets ----------------------------------------------------------------
 const YR_API_KEY = process.env.YR_API_KEY;
@@ -108,16 +120,42 @@ async function pollOfficial() {
   return buildRow(water, forecast, STORAGE_ID);
 }
 
-async function main() {
-  if (!YR_API_KEY) {
-    console.error("Missing YR_API_KEY.");
-    return; // exit 0; next scheduled run retries
+// Unofficial fallback: one GeoJSON call carrying water + air + wind. Used only
+// when YR_API_KEY is unset. Returns a ready-to-insert row, or null on failure.
+async function pollUnofficial() {
+  console.log("Polling via unofficial API (YR_API_KEY unset)");
+  let res;
+  try {
+    res = await fetch(LEGACY_API_URL);
+  } catch (err) {
+    console.error(`Network error fetching legacy API: ${err.message}`);
+    return null;
   }
+  if (!res.ok) {
+    console.error(`Legacy API request failed: ${res.status} ${res.statusText}`);
+    return null;
+  }
+  let geojson;
+  try {
+    geojson = await res.json();
+  } catch (err) {
+    console.error(`Malformed legacy API response: ${err.message}`);
+    return null;
+  }
+  const reading = extractReading(geojson, LOCATION_ID);
+  if (!reading) {
+    console.error(`Spot ${LOCATION_ID} not found or missing water temperature.`);
+    return null;
+  }
+  return toRow(reading, LOCATION_ID);
+}
+
+async function main() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.");
     return;
   }
-  const row = await pollOfficial();
+  const row = YR_API_KEY ? await pollOfficial() : await pollUnofficial();
   if (!row) return;
   const ok = await insertRow(row);
   if (ok) console.log(`Inserted reading: water=${row.water}C at ${row.time}`);
