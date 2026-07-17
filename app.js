@@ -3,6 +3,7 @@ import {
   latestReadingUrl,
   forecastQueryUrl,
   mapForecast,
+  clampForecast,
   mapRow,
   rangeBounds,
   toSeriesPairs,
@@ -23,6 +24,10 @@ const RANGES = ["24h", "7d", "30d", "all"];
 const STALE_THRESHOLD_SEC = 2 * 3600; // header "utdatert" badge
 const FORECAST_STALE_SEC = 3 * 3600; // drop a projection older than 3h (poller likely stalled)
 const TREND_SAMPLE = 3; // readings averaged at each end for the period trend
+// How far ahead (hours) to DRAW the 48h projection per selected range. The full
+// projection is always stored/fetched; wider ranges have room for all of it, and
+// 24t is trimmed so the observed data keeps its share of the chart.
+const FORECAST_HORIZON_H = { "24h": 12, "7d": 48, "30d": 48, "all": 48 };
 let allReadings = [];
 let latest = null;
 let forecast = null; // { line, lower, band } | null — the stored 48h projection
@@ -86,11 +91,13 @@ function osloParts(isoTime, opts) {
 
 function buildOption(readings, forecast, rangeKey, nowEpochSec) {
   const bounds = rangeBounds(rangeKey, nowEpochSec);
-  // When a projection is present, extend the right edge to its last point so the
-  // 48h dashed line + band aren't clipped by the now-pinned axis max.
-  const fcMaxMs = forecast?.line?.length
-    ? forecast.line[forecast.line.length - 1][0]
-    : null;
+  // Trim how much of the projection is drawn for the selected range (the full 48h
+  // is always stored/fetched; only the display is capped). The clamped `fc` drives
+  // both the series and the axis right-edge below.
+  const fc = clampForecast(forecast, nowEpochSec, FORECAST_HORIZON_H[rangeKey] ?? 48);
+  // When a projection is present, extend the right edge to its last drawn point so
+  // the dashed line + band aren't clipped by the now-pinned axis max.
+  const fcMaxMs = fc?.line?.length ? fc.line[fc.line.length - 1][0] : null;
   const axisMax = fcMaxMs != null && fcMaxMs > bounds.max ? fcMaxMs : bounds.max;
   const reducedMotion = window.matchMedia(
     "(prefers-reduced-motion: reduce)",
@@ -231,7 +238,7 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
         lineStyle: { width: 1.5, color: "#94a3b8", type: "dashed" },
         itemStyle: { color: "#94a3b8" },
       },
-      ...(forecast
+      ...(fc
         ? [
             // Transparent baseline at `lower`; the band area stacks on top of it.
             {
@@ -239,7 +246,7 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
               type: "line",
               stack: "prognose-band",
               yAxisIndex: 0,
-              data: forecast.lower,
+              data: fc.lower,
               showSymbol: false,
               silent: true,
               lineStyle: { opacity: 0 },
@@ -251,7 +258,7 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
               type: "line",
               stack: "prognose-band",
               yAxisIndex: 0,
-              data: forecast.band,
+              data: fc.band,
               showSymbol: false,
               silent: true,
               lineStyle: { opacity: 0 },
@@ -265,7 +272,7 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
               smooth: true,
               showSymbol: false,
               yAxisIndex: 0,
-              data: forecast.line,
+              data: fc.line,
               lineStyle: { width: 2, color: "#0ea5e9", type: "dashed" },
               itemStyle: { color: "#0ea5e9" },
               z: 3,
