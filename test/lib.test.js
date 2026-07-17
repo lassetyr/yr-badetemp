@@ -12,6 +12,8 @@ import {
   backtestError,
   buildProjection,
   HORIZON_H,
+  smoothAirSeries,
+  SMOOTH_WINDOW_H,
 } from "../scripts/lib.js";
 
 const SAMPLE = {
@@ -417,4 +419,42 @@ test("buildProjection attaches air/windSpeed/windDir (seed from history, rest fr
   assert.equal(p.points[1].air, 18);
   assert.equal(p.points[1].windSpeed, 4);
   assert.equal(p.points[1].windDir, 90);
+});
+
+test("smoothAirSeries replaces air with the trailing-window mean, preserving other fields", () => {
+  const series = [
+    { epoch: 0, air: 10, windSpeed: 1 },
+    { epoch: 3600, air: 20, windSpeed: 2 },
+    { epoch: 7200, air: 30, windSpeed: 3 },
+  ];
+  const out = smoothAirSeries(series, 2); // 2h window = 7200s, inclusive
+  assert.deepEqual(out.map((e) => e.air), [10, 15, 20]);
+  // i=0 → {10}; i=1 window [-3600,3600] → {10,20}=15; i=2 window [0,7200] → {10,20,30}=20
+  assert.deepEqual(out.map((e) => e.windSpeed), [1, 2, 3]); // other fields preserved
+  assert.equal(out[0].epoch, 0); // epoch preserved
+  assert.notEqual(out, series); // new array, not mutated in place
+});
+
+test("smoothAirSeries drops entries older than the window", () => {
+  const series = [
+    { epoch: 0, air: 10 },
+    { epoch: 3600, air: 20 },
+    { epoch: 100000, air: 30 }, // far in the future — window holds only itself
+  ];
+  const out = smoothAirSeries(series, 2);
+  assert.equal(out[2].air, 30); // 100000 window = [92800,100000]; earlier entries excluded
+});
+
+test("smoothAirSeries averages only non-null airs; empty window → null", () => {
+  const series = [
+    { epoch: 0, air: null },
+    { epoch: 3600, air: 20 },
+  ];
+  const out = smoothAirSeries(series, 2);
+  assert.equal(out[0].air, null); // window holds only its own null → null
+  assert.equal(out[1].air, 20); // null neighbor skipped, mean of {20}
+});
+
+test("smoothAirSeries on a single element returns its own air", () => {
+  assert.deepEqual(smoothAirSeries([{ epoch: 5, air: 12.5 }], 24), [{ epoch: 5, air: 12.5 }]);
 });

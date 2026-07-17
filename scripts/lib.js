@@ -12,6 +12,7 @@ export const INFLATE = 1.3;          // band inflation for met.no forecast-input
 export const BACKTEST_HORIZONS = [6, 12, 24, 48];
 export const BACKTEST_STRIDE = 6;    // subsample origins ~every 2h at 20-min cadence
 export const FALLBACK_ERR = 0.5;     // band half-width (°C) when backtest has no data
+export const SMOOTH_WINDOW_H = 24;   // trailing-mean window for the air driver
 
 // Find the feature with `locationId` and return a canonical reading,
 // or null if absent or missing a numeric water temperature.
@@ -111,6 +112,27 @@ export function extractForecastSeries(json) {
     out.push({ epoch, air, windSpeed: num(details?.wind_speed), windDir: num(details?.wind_from_direction) });
   }
   return out;
+}
+
+// Replace each entry's `air` with the trailing mean of air over the preceding
+// `windowH` hours (inclusive of the entry itself), preserving every other field.
+// Only non-null airs contribute; an entry whose window holds no non-null air gets
+// air: null. Input must be epoch-ascending. This is the model's slow driver — it
+// removes the diurnal swing that water can't follow, so the fit isn't diluted.
+export function smoothAirSeries(series, windowH = SMOOTH_WINDOW_H) {
+  const windowS = windowH * 3600;
+  return series.map((entry, i) => {
+    const lo = entry.epoch - windowS;
+    let sum = 0;
+    let count = 0;
+    for (let j = i; j >= 0; j--) {
+      if (series[j].epoch < lo) break;
+      if (series[j].air == null) continue;
+      sum += series[j].air;
+      count += 1;
+    }
+    return { ...entry, air: count > 0 ? sum / count : null };
+  });
 }
 
 // 3x3 determinant.
