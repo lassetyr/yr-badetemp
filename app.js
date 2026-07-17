@@ -438,6 +438,11 @@ async function loadForecast() {
     if (!res.ok) return false;
     const rows = await res.json();
     forecast = mapForecast(rows[0]?.payload);
+    // Re-render so a freshly-loaded projection appears immediately, regardless
+    // of whether loadData's render ran before `forecast` was set. Guard on
+    // readings so we don't force the empty state before loadData populates them
+    // (loadData's own render will then include the now-set `forecast`).
+    if (allReadings.length > 0) render();
   } catch {
     return false;
   }
