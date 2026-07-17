@@ -224,19 +224,23 @@ async function updateForecast() {
     console.error(`Network error fetching forecast series: ${err.message}`);
     return;
   }
-  const series = extractForecastSeries(json);
-  if (series.length === 0) {
-    console.error("No usable met.no forecast entries; skipping projection.");
-    return;
-  }
-  const history = await fetchHistory();
-  if (history.length < 2) {
-    console.error("Not enough history to project; skipping projection.");
-    return;
-  }
-  const payload = buildProjection(history, series, { horizonH: HORIZON_H });
-  if (await upsertForecast(payload)) {
-    console.log(`Projection updated: model=${payload.model}, points=${payload.points.length}`);
+  try {
+    const series = extractForecastSeries(json);
+    if (series.length === 0) {
+      console.error("No usable met.no forecast entries; skipping projection.");
+      return;
+    }
+    const history = await fetchHistory();
+    if (history.length < 2) {
+      console.error("Not enough history to project; skipping projection.");
+      return;
+    }
+    const payload = buildProjection(history, series, { horizonH: HORIZON_H });
+    if (await upsertForecast(payload)) {
+      console.log(`Projection updated: model=${payload.model}, points=${payload.points.length}`);
+    }
+  } catch (err) {
+    console.error(`Projection build failed: ${err.message}`);
   }
 }
 
