@@ -259,8 +259,9 @@ test("extractForecastSeries returns [] for a malformed response", () => {
   assert.deepEqual(extractForecastSeries(null), []);
 });
 
-// Generate readings by forward-integrating the exact relaxation model, so an
-// OLS fit must recover (a,b,c) to numerical precision. dtS default = 20 min.
+// Generate readings by forward-integrating the relaxation model. The fit
+// recovers (a,b); c is a drift term injected into the data that the no-intercept
+// fit cannot represent (used in some tests). dtS default = 20 min.
 function synthReadings({ a, b, c, n, dtS = 1200, w0 = 15, epoch0 = 1_700_000_000 }) {
   const readings = [];
   let w = w0;
@@ -305,9 +306,11 @@ test("fitRelaxation recovers a and b and always reports c:0", () => {
 
 test("fitRelaxation never fits an intercept even when the data drifts", () => {
   // True rate carries a +0.05/h drift the model cannot represent; c must stay 0.
+  // The fit absorbs the drift into (a,b) and succeeds despite the unrepresentable constant.
   const r = synthReadings({ a: 0.05, b: 0.01, c: 0.05, n: 300 });
   const fit = fitRelaxation(r);
   assert.equal(fit.c, 0);
+  assert.equal(fit.ok, true); // fit still succeeds (a>0) despite drift
 });
 
 test("fitRelaxation returns ok:false below MIN_PAIRS usable pairs", () => {

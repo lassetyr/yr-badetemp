@@ -174,7 +174,7 @@ async function fetchHistory() {
         headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
       });
       if (!res.ok) {
-        console.error(`History query failed: ${res.status} ${res.statusText}`);
+        console.error(`History query failed (page ${page}, offset ${page * PAGE}): ${res.status} ${res.statusText}`);
         return [];
       }
       const batch = await res.json();
