@@ -421,3 +421,28 @@ test("clampForecast returns null when nothing is within the horizon", () => {
   const late = { line: [[87_400_000, 20]], lower: [[87_400_000, 19]], band: [[87_400_000, 1]] };
   assert.equal(clampForecast(late, FC_NOW, 12), null);
 });
+
+test("mapForecast builds airLine and windLine (bearing as a third element)", () => {
+  const payload = {
+    points: [
+      { epoch: 1000, water: 15, lower: 15, upper: 15, air: 18, windSpeed: 3, windDir: 200 },
+      { epoch: 4600, water: 15.4, lower: 14.9, upper: 15.9, air: 18.5, windSpeed: 4, windDir: 210 },
+    ],
+  };
+  const m = mapForecast(payload);
+  assert.deepEqual(m.airLine, [[1_000_000, 18], [4_600_000, 18.5]]);
+  assert.deepEqual(m.windLine, [[1_000_000, 3, 200], [4_600_000, 4, 210]]);
+});
+
+test("clampForecast trims airLine and windLine to the horizon too", () => {
+  const fc = {
+    line:  [[1_000_000, 20], [87_400_000, 20.1]],
+    lower: [[1_000_000, 20], [87_400_000, 19.3]],
+    band:  [[1_000_000, 0],  [87_400_000, 1.6]],
+    airLine:  [[1_000_000, 18], [87_400_000, 17]],
+    windLine: [[1_000_000, 3, 200], [87_400_000, 5, 210]],
+  };
+  const c = clampForecast(fc, FC_NOW, 12); // cutoff 44_200_000 → drop the 87_400_000 point
+  assert.deepEqual(c.airLine, [[1_000_000, 18]]);
+  assert.deepEqual(c.windLine, [[1_000_000, 3, 200]]); // third element preserved
+});

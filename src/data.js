@@ -169,13 +169,18 @@ export function mapForecast(payload) {
   const line = [];
   const lower = [];
   const band = [];
+  const airLine = [];
+  const windLine = [];
   for (const p of points) {
     const ms = p.epoch * 1000;
     line.push([ms, p.water]);
     lower.push([ms, p.lower]);
     band.push([ms, p.upper - p.lower]);
+    airLine.push([ms, p.air ?? null]);
+    // Bearing rides as a third element: the line plots windSpeed, the tooltip reads dir.
+    windLine.push([ms, p.windSpeed ?? null, p.windDir ?? null]);
   }
-  return { line, lower, band };
+  return { line, lower, band, airLine, windLine };
 }
 
 // Trim a mapped forecast ({line,lower,band}) to a display horizon: keep only the
@@ -185,11 +190,14 @@ export function mapForecast(payload) {
 export function clampForecast(forecast, nowEpochSec, maxHorizonH) {
   if (!forecast || !forecast.line?.length) return null;
   const cutoffMs = (nowEpochSec + maxHorizonH * 3600) * 1000;
+  const within = (arr) => (arr ?? []).filter(([ms]) => ms <= cutoffMs);
   const line = forecast.line.filter(([ms]) => ms <= cutoffMs);
   if (line.length === 0) return null;
   return {
     line,
-    lower: forecast.lower.filter(([ms]) => ms <= cutoffMs),
-    band: forecast.band.filter(([ms]) => ms <= cutoffMs),
+    lower: within(forecast.lower),
+    band: within(forecast.band),
+    airLine: within(forecast.airLine),
+    windLine: within(forecast.windLine),
   };
 }
