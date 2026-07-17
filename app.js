@@ -201,7 +201,6 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
           hour: "2-digit",
           minute: "2-digit",
         });
-        const header = `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}`;
         // One row per metric: prefer the observed value, fall back to the
         // forecast value where there's no observation (the future region). This
         // avoids duplicate observed/"(prognose)" rows at the seam, where the
@@ -218,17 +217,24 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
           if (f && f.value?.[1] != null) return f;
           return null;
         };
-        const rows = [
+        const chosen = [
           pick("Vann", "Vann (prognose)"),
           pick("Luft", "Luft (prognose)"),
           pick("Vind", "Vind (prognose)"),
-        ]
-          .filter(Boolean)
+        ].filter(Boolean);
+        // The picked values are all-observed or all-forecast (the two overlap
+        // only at the seed, where observed wins), so one header tag suffices.
+        const isForecast = chosen.some((s) => s.seriesName.endsWith(" (prognose)"));
+        const header =
+          `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}` +
+          (isForecast ? " · prognose" : "");
+        const rows = chosen
           .map((s) => {
+            const base = s.seriesName.replace(" (prognose)", "");
             const raw = s.value?.[1];
-            const unit = SERIES_UNIT[s.seriesName] ?? "";
+            const unit = SERIES_UNIT[base] ?? "";
             const value = raw == null ? "–" : `${nf1.format(raw)} ${unit}`.trim();
-            let line = `${s.marker}${s.seriesName}: <b>${value}</b>`;
+            let line = `${s.marker}${base}: <b>${value}</b>`;
             if (s.seriesName === "Vind" && raw != null) {
               const r = byMs.get(s.value?.[0]);
               line += ` ${degToArrow(r?.windDir) ?? "-"}`;
