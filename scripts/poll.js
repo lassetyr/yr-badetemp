@@ -161,7 +161,9 @@ async function fetchHistory() {
   const url =
     `${SUPABASE_URL}/rest/v1/readings` +
     `?select=epoch,water,air,wind_speed&location_id=eq.${STORAGE_ID}` +
-    `&epoch=gte.${cutoff}&order=epoch.asc`;
+    `&epoch=gte.${cutoff}&order=epoch.desc`;
+  // Fetch newest-first so Supabase's row cap drops the oldest rows (not the newest).
+  // We'll reverse the array below to restore oldest-first for the model.
   try {
     const res = await fetch(url, {
       headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
@@ -171,7 +173,9 @@ async function fetchHistory() {
       return [];
     }
     const rows = await res.json();
-    return rows.map((r) => ({ epoch: r.epoch, water: r.water, air: r.air, windSpeed: r.wind_speed }));
+    // rows are newest-first (epoch.desc); reverse to oldest-first so the model
+    // fits over consecutive pairs and buildProjection seeds from the newest row.
+    return rows.map((r) => ({ epoch: r.epoch, water: r.water, air: r.air, windSpeed: r.wind_speed })).reverse();
   } catch (err) {
     console.error(`Network error fetching history: ${err.message}`);
     return [];
