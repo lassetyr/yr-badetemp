@@ -12,6 +12,8 @@ import {
   humanizeAge,
   degToArrow,
   waterTrend,
+  forecastQueryUrl,
+  mapForecast,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -351,4 +353,35 @@ test("waterTrend returns null with fewer than two usable readings", () => {
   assert.equal(waterTrend([], 3), null);
   assert.equal(waterTrend([{ water: 15 }], 3), null);
   assert.equal(waterTrend([{ water: null }, { water: 16 }], 3), null);
+});
+
+test("forecastQueryUrl targets the forecast endpoint and filters by location", () => {
+  const url = new URL(forecastQueryUrl(BASE, "0-10238"));
+  assert.equal(url.origin + url.pathname, `${BASE}/rest/v1/forecast`);
+  assert.equal(url.searchParams.get("location_id"), "eq.0-10238");
+  assert.equal(url.searchParams.get("select"), "payload,generated_at");
+});
+
+test("mapForecast builds line + stacked band pairs from points", () => {
+  const payload = {
+    points: [
+      { epoch: 1000, water: 15, lower: 15, upper: 15 },
+      { epoch: 4600, water: 15.4, lower: 14.9, upper: 15.9 },
+    ],
+  };
+  const m = mapForecast(payload);
+  assert.deepEqual(m.line, [[1_000_000, 15], [4_600_000, 15.4]]);
+  assert.deepEqual(m.lower, [[1_000_000, 15], [4_600_000, 14.9]]);
+  // band = upper - lower, stacked on top of `lower`. Compare ms + tolerance
+  // (15.9 - 14.9 is 1.0000000000000009 in float, so avoid exact equality).
+  assert.equal(m.band[0][0], 1_000_000);
+  assert.equal(m.band[0][1], 0);
+  assert.equal(m.band[1][0], 4_600_000);
+  assert.ok(Math.abs(m.band[1][1] - 1.0) < 1e-9);
+});
+
+test("mapForecast returns null for missing or empty payloads", () => {
+  assert.equal(mapForecast(null), null);
+  assert.equal(mapForecast({}), null);
+  assert.equal(mapForecast({ points: [] }), null);
 });

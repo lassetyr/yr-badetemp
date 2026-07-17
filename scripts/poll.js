@@ -1,9 +1,13 @@
 import {
   extractOfficialWater,
   extractForecast,
+  extractForecastSeries,
   buildRow,
+  buildProjection,
   extractReading,
   toRow,
+  HORIZON_H,
+  FIT_WINDOW_DAYS,
 } from "./lib.js";
 
 // --- Tracked spot -----------------------------------------------------------
@@ -150,15 +154,111 @@ async function pollUnofficial() {
   return toRow(reading, LOCATION_ID);
 }
 
+// Fetch the recent reading history for the fit (oldest-first), mapped to the
+// camelCase shape the model helpers expect. Returns [] on any failure.
+async function fetchHistory() {
+  const cutoff = Math.floor(Date.now() / 1000) - FIT_WINDOW_DAYS * 86400;
+  const url =
+    `${SUPABASE_URL}/rest/v1/readings` +
+    `?select=epoch,water,air,wind_speed&location_id=eq.${STORAGE_ID}` +
+    `&epoch=gte.${cutoff}&order=epoch.desc`;
+  // Fetch newest-first so Supabase's row cap drops the oldest rows (not the newest).
+  // We'll reverse the array below to restore oldest-first for the model.
+  try {
+    const res = await fetch(url, {
+      headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
+    });
+    if (!res.ok) {
+      console.error(`History query failed: ${res.status} ${res.statusText}`);
+      return [];
+    }
+    const rows = await res.json();
+    // rows are newest-first (epoch.desc); reverse to oldest-first so the model
+    // fits over consecutive pairs and buildProjection seeds from the newest row.
+    return rows.map((r) => ({ epoch: r.epoch, water: r.water, air: r.air, windSpeed: r.wind_speed })).reverse();
+  } catch (err) {
+    console.error(`Network error fetching history: ${err.message}`);
+    return [];
+  }
+}
+
+// Upsert the single forecast row for this location (replace-on-write via the
+// location_id primary key). Returns true on success, false on any failure.
+async function upsertForecast(payload) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/forecast`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+        // ON CONFLICT (location_id) DO UPDATE — keep only the newest projection.
+        Prefer: "resolution=merge-duplicates",
+      },
+      body: JSON.stringify({
+        location_id: STORAGE_ID,
+        generated_at: new Date().toISOString(),
+        payload,
+      }),
+    });
+    if (!res.ok) {
+      console.error(`Forecast upsert failed: ${res.status} ${res.statusText}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`Network error upserting forecast: ${err.message}`);
+    return false;
+  }
+}
+
+// Refresh the stored 48h projection. Independent of the water-source path: does
+// its own met.no fetch, queries history, builds the projection, upserts. Fully
+// fail-soft — any gap just leaves the previous forecast row in place.
+async function updateForecast() {
+  let json;
+  try {
+    const res = await fetch(FORECAST_API_URL, { headers: { "User-Agent": MET_USER_AGENT } });
+    if (!res.ok) {
+      console.error(`Forecast series request failed: ${res.status} ${res.statusText}`);
+      return;
+    }
+    json = await res.json();
+  } catch (err) {
+    console.error(`Network error fetching forecast series: ${err.message}`);
+    return;
+  }
+  try {
+    const series = extractForecastSeries(json);
+    if (series.length === 0) {
+      console.error("No usable met.no forecast entries; skipping projection.");
+      return;
+    }
+    const history = await fetchHistory();
+    if (history.length < 2) {
+      console.error("Not enough history to project; skipping projection.");
+      return;
+    }
+    const payload = buildProjection(history, series, { horizonH: HORIZON_H });
+    if (await upsertForecast(payload)) {
+      console.log(`Projection updated: model=${payload.model}, points=${payload.points.length}`);
+    }
+  } catch (err) {
+    console.error(`Projection build failed: ${err.message}`);
+  }
+}
+
 async function main() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.");
     return;
   }
   const row = YR_API_KEY ? await pollOfficial() : await pollUnofficial();
-  if (!row) return;
-  const ok = await insertRow(row);
-  if (ok) console.log(`Inserted reading: water=${row.water}C at ${row.time}`);
+  if (row) {
+    const ok = await insertRow(row);
+    if (ok) console.log(`Inserted reading: water=${row.water}C at ${row.time}`);
+  }
+  await updateForecast(); // fail-soft projection refresh; never blocks the insert
 }
 
 main().catch((err) => {

@@ -149,3 +149,31 @@ export function waterTrend(readings, sampleSize) {
   const direction = Math.abs(delta) < 0.05 ? "flat" : delta > 0 ? "up" : "down";
   return { delta, direction };
 }
+
+// Build a PostgREST query URL for the single stored forecast row at a location.
+// PostgREST returns an array; the caller reads [0]?.payload.
+export function forecastQueryUrl(baseUrl, locationId) {
+  const params = new URLSearchParams();
+  params.set("select", "payload,generated_at");
+  params.set("location_id", `eq.${locationId}`);
+  return `${baseUrl}/rest/v1/forecast?${params.toString()}`;
+}
+
+// Map a stored forecast payload to ECharts series data: a dashed projection
+// `line`, plus a confidence band drawn as a transparent `lower` baseline and a
+// stacked `band` (= upper − lower) area on top of it. Returns null when there is
+// nothing to draw.
+export function mapForecast(payload) {
+  const points = payload?.points;
+  if (!Array.isArray(points) || points.length === 0) return null;
+  const line = [];
+  const lower = [];
+  const band = [];
+  for (const p of points) {
+    const ms = p.epoch * 1000;
+    line.push([ms, p.water]);
+    lower.push([ms, p.lower]);
+    band.push([ms, p.upper - p.lower]);
+  }
+  return { line, lower, band };
+}

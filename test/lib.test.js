@@ -6,6 +6,12 @@ import {
   extractOfficialWater,
   extractForecast,
   buildRow,
+  extractForecastSeries,
+  fitRelaxation,
+  rollForward,
+  backtestError,
+  buildProjection,
+  HORIZON_H,
 } from "../scripts/lib.js";
 
 const SAMPLE = {
@@ -220,4 +226,172 @@ test("buildRow nulls air/wind when forecast is null (weather fetch failed)", () 
   assert.equal(row.wind_speed, null);
   assert.equal(row.wind_gust, null);
   assert.equal(row.wind_dir, null);
+});
+
+const METNO_SAMPLE = {
+  properties: {
+    timeseries: [
+      { time: "2026-07-17T10:00:00Z", data: { instant: { details: { air_temperature: 21.0, wind_speed: 2.5 } } } },
+      { time: "2026-07-17T11:00:00Z", data: { instant: { details: { air_temperature: 21.6, wind_speed: 3.1 } } } },
+      { time: "2026-07-17T12:00:00Z", data: { instant: { details: {} } } }, // no air → skipped
+    ],
+  },
+};
+
+test("extractForecastSeries returns ascending {epoch,air,windSpeed}, skipping entries with no air", () => {
+  const series = extractForecastSeries(METNO_SAMPLE);
+  assert.equal(series.length, 2);
+  assert.deepEqual(series[0], {
+    epoch: Math.floor(Date.parse("2026-07-17T10:00:00Z") / 1000),
+    air: 21.0,
+    windSpeed: 2.5,
+  });
+  assert.equal(series[1].air, 21.6);
+  assert.ok(series[0].epoch < series[1].epoch);
+});
+
+test("extractForecastSeries returns [] for a malformed response", () => {
+  assert.deepEqual(extractForecastSeries({}), []);
+  assert.deepEqual(extractForecastSeries(null), []);
+});
+
+// Generate readings by forward-integrating the exact relaxation model, so an
+// OLS fit must recover (a,b,c) to numerical precision. dtS default = 20 min.
+function synthReadings({ a, b, c, n, dtS = 1200, w0 = 15, epoch0 = 1_700_000_000 }) {
+  const readings = [];
+  let w = w0;
+  let epoch = epoch0;
+  for (let i = 0; i < n; i++) {
+    const air = 20 + 5 * Math.sin(i / 10);
+    const windSpeed = 2 + Math.abs(Math.sin(i / 7));
+    readings.push({ epoch, water: w, air, windSpeed });
+    const dtH = dtS / 3600;
+    w = w + dtH * (a * (air - w) + b * windSpeed + c);
+    epoch += dtS;
+  }
+  return readings;
+}
+
+test("fitRelaxation recovers the coefficients that generated the data", () => {
+  const r = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 300 });
+  const fit = fitRelaxation(r);
+  assert.ok(fit.ok);
+  assert.ok(Math.abs(fit.a - 0.05) < 1e-3, `a=${fit.a}`);
+  assert.ok(Math.abs(fit.b - 0.01) < 1e-3, `b=${fit.b}`);
+  assert.ok(Math.abs(fit.c - -0.002) < 1e-3, `c=${fit.c}`);
+});
+
+test("fitRelaxation returns ok:false below MIN_PAIRS usable pairs", () => {
+  const fit = fitRelaxation(synthReadings({ a: 0.05, b: 0.01, c: 0, n: 10 }));
+  assert.equal(fit.ok, false);
+});
+
+test("fitRelaxation returns ok:false on a non-physical fit (flat water → a≤0)", () => {
+  // Constant water with varying air/wind: rate is 0 everywhere → a fits to ~0.
+  const r = synthReadings({ a: 0, b: 0, c: 0, n: 200 });
+  const fit = fitRelaxation(r);
+  assert.equal(fit.ok, false);
+});
+
+test("fitRelaxation skips pairs with an out-of-range time gap", () => {
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0, n: 120 });
+  r[60].epoch += 3 * 86400; // huge gap around index 60 → that pair excluded
+  const fit = fitRelaxation(r);
+  assert.ok(fit.ok);
+  assert.ok(fit.n < r.length - 1); // at least one pair dropped
+});
+
+test("rollForward relaxes water toward the forecast air temperature", () => {
+  const seed = { epoch: 1000, water: 10 };
+  const hourly = Array.from({ length: 5 }, (_, i) => ({
+    epoch: 1000 + (i + 1) * 3600,
+    air: 20,
+    windSpeed: 0,
+  }));
+  const pts = rollForward(seed, hourly, { a: 0.1, b: 0, c: 0 });
+  assert.equal(pts.length, 5);
+  // w1 = 10 + 1*(0.1*(20-10)) = 11
+  assert.ok(Math.abs(pts[0].water - 11) < 1e-9);
+  // monotonically rising toward 20, never overshooting
+  for (let i = 1; i < pts.length; i++) assert.ok(pts[i].water > pts[i - 1].water);
+  assert.ok(pts[pts.length - 1].water < 20);
+});
+
+test("rollForward stops at the horizon and ignores past/nullish entries", () => {
+  const seed = { epoch: 0, water: 10 };
+  const series = [
+    { epoch: -3600, air: 20, windSpeed: 1 }, // before seed → ignored
+    { epoch: 3600, air: 20, windSpeed: 1 },
+    { epoch: 7200, air: null, windSpeed: 1 }, // null air → skipped
+    { epoch: (HORIZON_H + 1) * 3600, air: 20, windSpeed: 1 }, // past horizon → excluded
+  ];
+  const pts = rollForward(seed, series, { a: 0.1, b: 0, c: 0 });
+  assert.deepEqual(pts.map((p) => p.epoch), [3600]);
+});
+
+test("rollForward with zero coeffs is flat persistence", () => {
+  const seed = { epoch: 0, water: 12.3 };
+  const series = [{ epoch: 3600, air: 25, windSpeed: 5 }, { epoch: 7200, air: 5, windSpeed: 0 }];
+  const pts = rollForward(seed, series, { a: 0, b: 0, c: 0 });
+  assert.deepEqual(pts.map((p) => p.water), [12.3, 12.3]);
+});
+
+test("backtestError is small when the model reproduces the data", () => {
+  const coeffs = { a: 0.05, b: 0.01, c: -0.002 };
+  const r = synthReadings({ ...coeffs, n: 600 });
+  const err = backtestError(r, coeffs, [6, 12, 24]);
+  for (const h of [6, 12, 24]) {
+    assert.ok(err[h] != null, `err[${h}] should have samples`);
+    // Small-but-nonzero: rollForward applies end-of-interval air forcing while
+    // the fit uses start-of-interval predictors, so exact-model self-error is a
+    // deterministic ~0.07°C — still an order of magnitude below persistence error.
+    assert.ok(err[h] < 0.15, `err[${h}]=${err[h]} should be small`);
+  }
+});
+
+test("backtestError with zero coeffs (persistence) has positive error on drifting water", () => {
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0.01, n: 600 });
+  const err = backtestError(r, { a: 0, b: 0, c: 0 }, [24]);
+  assert.ok(err[24] > 0.1, `persistence error ${err[24]} should be sizeable`);
+});
+
+test("backtestError returns null for a horizon with no samples", () => {
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0, n: 20 });
+  const err = backtestError(r, { a: 0.05, b: 0.01, c: 0 }, [48]);
+  assert.equal(err[48], null);
+});
+
+test("buildProjection produces a relaxation payload with a widening band", () => {
+  const history = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 400 });
+  const seed = history[history.length - 1];
+  const forecastSeries = Array.from({ length: 48 }, (_, i) => ({
+    epoch: seed.epoch + (i + 1) * 3600,
+    air: 20,
+    windSpeed: 2,
+  }));
+  const p = buildProjection(history, forecastSeries);
+  assert.equal(p.model, "relaxation");
+  assert.ok(p.coeffs && p.coeffs.a > 0);
+  assert.equal(p.horizonH, 48);
+  // first point is the seed with a zero-width band
+  assert.equal(p.points[0].epoch, seed.epoch);
+  assert.equal(p.points[0].lower, p.points[0].upper);
+  // every point brackets its center, band never inverts
+  for (const pt of p.points) assert.ok(pt.lower <= pt.water && pt.water <= pt.upper);
+  assert.equal(typeof p.backtest.mae48, "number");
+});
+
+test("buildProjection falls back to flat persistence on a non-physical fit", () => {
+  const history = synthReadings({ a: 0, b: 0, c: 0, n: 300 }); // flat water → fit not ok
+  const seed = history[history.length - 1];
+  const forecastSeries = [
+    { epoch: seed.epoch + 3600, air: 30, windSpeed: 9 },
+    { epoch: seed.epoch + 7200, air: 2, windSpeed: 0 },
+  ];
+  const p = buildProjection(history, forecastSeries);
+  assert.equal(p.model, "persistence");
+  assert.equal(p.coeffs, null);
+  // projected centers are flat at the seed water despite wild air/wind
+  assert.equal(p.points[1].water, p.points[0].water);
+  assert.equal(p.points[2].water, p.points[0].water);
 });

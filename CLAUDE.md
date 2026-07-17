@@ -64,6 +64,18 @@ Two halves share pure helpers but never import each other:
   transient error leaves the existing header/chart intact rather than blanking
   it.
 
+- **Forecast** (`scripts/poll.js:updateForecast` → `scripts/lib.js`): each poll
+  also builds a best-effort 48h water-temperature projection. `lib.js` fits a
+  relaxation model `dWater/dt = a·(air−water) + b·wind + c` from ~30 days of
+  history (`fitRelaxation`), rolls it forward on the met.no forecast timeseries
+  (`extractForecastSeries` → `rollForward`), sizes a confidence band from a
+  walk-forward backtest (`backtestError`, inflated by `INFLATE=1.3` for
+  forecast-input error), and assembles the payload (`buildProjection`). `poll.js`
+  upserts one row into the `forecast` table (replace-on-write, keyed by
+  `location_id`). The browser reads it via `forecastQueryUrl`/`mapForecast`
+  (`src/data.js`) and draws a dashed line + shaded band. When the fit is
+  untrustworthy it falls back to flat persistence (`model: "persistence"`).
+
 `lib.js` and `src/data.js` are deliberately I/O-free so the tests can exercise
 logic without network or DOM. When adding logic, put the pure part in those
 files and keep side effects in `poll.js` / `app.js`.
@@ -81,6 +93,10 @@ Reads are public via a Row Level Security `SELECT` policy granted to the `anon`
 role (the publishable key authenticates as `anon`). Writes use the secret key
 (`SUPABASE_SERVICE_KEY`), which bypasses RLS and is only ever set server-side
 (GitHub Actions secret / local env) — never in `src/config.js`.
+
+The separate `forecast` table is the one exception to append-only: it holds a
+single row per location, replaced each poll via `Prefer: resolution=merge-duplicates`
+(ON CONFLICT DO UPDATE). It never affects `readings`.
 
 ### Scheduling reality
 
@@ -113,6 +129,9 @@ entirely in the external scheduler's configuration.
   endpoint URLs and `MET_USER_AGENT` are constants in `scripts/poll.js`.
 - Secrets: `YR_API_KEY` (official water API; **optional** — unset falls back to
   the unofficial endpoint), plus `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
+- Forecast model tunables (constants in `scripts/lib.js`): `FIT_WINDOW_DAYS`,
+  `MIN_GAP_S`/`MAX_GAP_S`, `MIN_PAIRS`, `HORIZON_H`, `INFLATE`,
+  `BACKTEST_HORIZONS`/`BACKTEST_STRIDE`, `FALLBACK_ERR`.
 - Browser refresh cadence: `REFRESH_MS` in `app.js` (auto-refetches without page
   reload; pauses while the tab is hidden).
 - Poll cadence: configured in the external scheduler (cron-job.org) that hits
