@@ -12,6 +12,7 @@ export const INFLATE = 1.3;          // band inflation for met.no forecast-input
 export const BACKTEST_HORIZONS = [6, 12, 24, 48];
 export const BACKTEST_STRIDE = 6;    // subsample origins ~every 2h at 20-min cadence
 export const FALLBACK_ERR = 0.5;     // band half-width (°C) when backtest has no data
+export const SMOOTH_WINDOW_H = 24;   // trailing-mean window for the air driver
 
 // Find the feature with `locationId` and return a canonical reading,
 // or null if absent or missing a numeric water temperature.
@@ -113,34 +114,48 @@ export function extractForecastSeries(json) {
   return out;
 }
 
-// 3x3 determinant.
-function det3(m) {
-  return (
-    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
-    m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
-    m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
-  );
+// Replace each entry's `air` with the trailing mean of air over the preceding
+// `windowH` hours (inclusive of the entry itself), preserving every other field.
+// Only non-null airs contribute; an entry whose window holds no non-null air gets
+// air: null. Input must be epoch-ascending. This is the model's slow driver — it
+// removes the diurnal swing that water can't follow, so the fit isn't diluted.
+export function smoothAirSeries(series, windowH = SMOOTH_WINDOW_H) {
+  const windowS = windowH * 3600;
+  return series.map((entry, i) => {
+    const lo = entry.epoch - windowS;
+    let sum = 0;
+    let count = 0;
+    for (let j = i; j >= 0; j--) {
+      if (series[j].epoch < lo) break;
+      if (series[j].air == null) continue;
+      sum += series[j].air;
+      count += 1;
+    }
+    return { ...entry, air: count > 0 ? sum / count : null };
+  });
 }
 
-// Solve Ax = y for a 3x3 A by Cramer's rule. Returns [x0,x1,x2] or null when the
+// Solve a 2x2 system Ax = y by Cramer's rule. Returns [x0,x1] or null when the
 // system is singular/near-singular.
-function solve3(A, y) {
-  const d = det3(A);
+function solve2(A, y) {
+  const d = A[0][0] * A[1][1] - A[0][1] * A[1][0];
   if (!Number.isFinite(d) || Math.abs(d) < 1e-12) return null;
-  const withCol = (j) => A.map((row, i) => row.map((v, k) => (k === j ? y[i] : v)));
-  return [det3(withCol(0)) / d, det3(withCol(1)) / d, det3(withCol(2)) / d];
+  return [
+    (y[0] * A[1][1] - A[0][1] * y[1]) / d,
+    (A[0][0] * y[1] - y[0] * A[1][0]) / d,
+  ];
 }
 
-// Least-squares fit of dWater/dt = a*(air-water) + b*windSpeed + c over
+// Least-squares fit of dWater/dt = a*(air-water) + b*windSpeed (no intercept) over
 // consecutive reading pairs. Only pairs with a sane time gap and all predictors
-// present contribute. Returns {a,b,c,n,ok}; ok gates the caller into the
+// present contribute. Returns {a,b,c,n,ok} where c is always 0; ok gates the caller into the
 // persistence fallback when the fit is untrustworthy or non-physical (a<=0).
 export function fitRelaxation(readings, opts = {}) {
   const minGap = opts.minGapS ?? MIN_GAP_S;
   const maxGap = opts.maxGapS ?? MAX_GAP_S;
   const minPairs = opts.minPairs ?? MIN_PAIRS;
-  const S = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-  const rhs = [0, 0, 0];
+  const S = [[0, 0], [0, 0]];
+  const rhs = [0, 0];
   let n = 0;
   for (let i = 0; i < readings.length - 1; i++) {
     const r0 = readings[i];
@@ -150,19 +165,19 @@ export function fitRelaxation(readings, opts = {}) {
     if (r0.water == null || r1.water == null || r0.air == null || r0.windSpeed == null) continue;
     const dtH = gap / 3600;
     const rate = (r1.water - r0.water) / dtH;
-    const x = [r0.air - r0.water, r0.windSpeed, 1];
-    for (let a = 0; a < 3; a++) {
-      for (let b = 0; b < 3; b++) S[a][b] += x[a] * x[b];
+    const x = [r0.air - r0.water, r0.windSpeed]; // no intercept column
+    for (let a = 0; a < 2; a++) {
+      for (let b = 0; b < 2; b++) S[a][b] += x[a] * x[b];
       rhs[a] += x[a] * rate;
     }
     n++;
   }
   if (n < minPairs) return { a: 0, b: 0, c: 0, n, ok: false };
-  const sol = solve3(S, rhs);
+  const sol = solve2(S, rhs);
   if (!sol) return { a: 0, b: 0, c: 0, n, ok: false };
-  const [a, b, c] = sol;
-  const ok = Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(c) && a > 0;
-  return { a: ok ? a : 0, b: ok ? b : 0, c: ok ? c : 0, n, ok };
+  const [a, b] = sol;
+  const ok = Number.isFinite(a) && Number.isFinite(b) && a > 0;
+  return { a: ok ? a : 0, b: ok ? b : 0, c: 0, n, ok };
 }
 
 // Integrate dWater/dt = a*(air-water) + b*windSpeed + c forward from `seed`
@@ -269,13 +284,26 @@ function interpError(err, h) {
 // zero-width band so the dashed line joins the solid line at "now".
 export function buildProjection(history, forecastSeries, opts = {}) {
   const horizonH = opts.horizonH ?? HORIZON_H;
-  const fit = fitRelaxation(history);
-  const coeffs = fit.ok ? { a: fit.a, b: fit.b, c: fit.c } : { a: 0, b: 0, c: 0 };
+  const windowH = opts.smoothWindowH ?? SMOOTH_WINDOW_H;
   const seed = history[history.length - 1];
-  const rolled = rollForward({ epoch: seed.epoch, water: seed.water }, forecastSeries, coeffs, { horizonH });
-  const err = backtestError(history, coeffs, BACKTEST_HORIZONS);
-  // The met.no air/wind/dir driving each forecast timestamp, so the browser can
-  // draw them as forward lines. Keyed by epoch to match each rolled point.
+  // Fit and backtest on a history whose air is the trailing-mean driver, so the
+  // coupling reflects the slow signal water actually follows (not the diurnal wobble).
+  const smoothHist = smoothAirSeries(history, windowH);
+  const fit = fitRelaxation(smoothHist);
+  const coeffs = fit.ok ? { a: fit.a, b: fit.b, c: fit.c } : { a: 0, b: 0, c: 0 };
+  const err = backtestError(smoothHist, coeffs, BACKTEST_HORIZONS);
+  // Roll-forward driver: smooth air ACROSS THE SEAM so the first `windowH` hours
+  // of forecast average real observations rather than cold-starting. Concatenate
+  // the recent history tail with the forecast, smooth, then keep the forecast
+  // portion (its air is now the trailing mean; its wind stays the raw forecast wind).
+  const tail = history
+    .filter((r) => r.epoch > seed.epoch - windowH * 3600 && r.epoch <= seed.epoch)
+    .map((r) => ({ epoch: r.epoch, air: r.air, windSpeed: r.windSpeed }));
+  const combined = tail.concat(forecastSeries).sort((x, y) => x.epoch - y.epoch);
+  const smoothedForecast = smoothAirSeries(combined, windowH).filter((f) => f.epoch > seed.epoch);
+  const rolled = rollForward({ epoch: seed.epoch, water: seed.water }, smoothedForecast, coeffs, { horizonH });
+  // Displayed air/wind stay the RAW met.no forecast (smoothing is internal to the
+  // water model). Keyed by epoch to stamp each rolled point.
   const weather = new Map(forecastSeries.map((f) => [f.epoch, f]));
   const points = [{
     epoch: seed.epoch,

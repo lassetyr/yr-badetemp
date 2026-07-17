@@ -12,6 +12,8 @@ import {
   backtestError,
   buildProjection,
   HORIZON_H,
+  smoothAirSeries,
+  SMOOTH_WINDOW_H,
 } from "../scripts/lib.js";
 
 const SAMPLE = {
@@ -257,8 +259,9 @@ test("extractForecastSeries returns [] for a malformed response", () => {
   assert.deepEqual(extractForecastSeries(null), []);
 });
 
-// Generate readings by forward-integrating the exact relaxation model, so an
-// OLS fit must recover (a,b,c) to numerical precision. dtS default = 20 min.
+// Generate readings by forward-integrating the relaxation model. The fit
+// recovers (a,b); c is a drift term injected into the data that the no-intercept
+// fit cannot represent (used in some tests). dtS default = 20 min.
 function synthReadings({ a, b, c, n, dtS = 1200, w0 = 15, epoch0 = 1_700_000_000 }) {
   const readings = [];
   let w = w0;
@@ -274,13 +277,40 @@ function synthReadings({ a, b, c, n, dtS = 1200, w0 = 15, epoch0 = 1_700_000_000
   return readings;
 }
 
-test("fitRelaxation recovers the coefficients that generated the data", () => {
-  const r = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 300 });
+// Readings with CONSTANT air (so 24h smoothing is an identity) and water relaxing
+// toward it, generated from the exact no-intercept model. Wind varies so b is
+// identifiable. Used for buildProjection tests where the smoothed driver == raw.
+function synthConst({ a, b, air = 10, n, dtS = 1200, w0 = 15, epoch0 = 1_700_000_000 }) {
+  const readings = [];
+  let w = w0;
+  let epoch = epoch0;
+  for (let i = 0; i < n; i++) {
+    const windSpeed = 2 + Math.abs(Math.sin(i / 7));
+    readings.push({ epoch, water: w, air, windSpeed, windDir: 200 });
+    const dtH = dtS / 3600;
+    w = w + dtH * (a * (air - w) + b * windSpeed);
+    epoch += dtS;
+  }
+  return readings;
+}
+
+test("fitRelaxation recovers a and b and always reports c:0", () => {
+  // Data generated with c:0 (no intercept), so an intercept-free fit must recover a,b.
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0, n: 300 });
   const fit = fitRelaxation(r);
   assert.ok(fit.ok);
   assert.ok(Math.abs(fit.a - 0.05) < 1e-3, `a=${fit.a}`);
   assert.ok(Math.abs(fit.b - 0.01) < 1e-3, `b=${fit.b}`);
-  assert.ok(Math.abs(fit.c - -0.002) < 1e-3, `c=${fit.c}`);
+  assert.equal(fit.c, 0); // the model no longer fits an intercept
+});
+
+test("fitRelaxation never fits an intercept even when the data drifts", () => {
+  // True rate carries a +0.05/h drift the model cannot represent; c must stay 0.
+  // The fit absorbs the drift into (a,b) and succeeds despite the unrepresentable constant.
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0.05, n: 300 });
+  const fit = fitRelaxation(r);
+  assert.equal(fit.c, 0);
+  assert.equal(fit.ok, true); // fit still succeeds (a>0) despite drift
 });
 
 test("fitRelaxation returns ok:false below MIN_PAIRS usable pairs", () => {
@@ -363,58 +393,135 @@ test("backtestError returns null for a horizon with no samples", () => {
   assert.equal(err[48], null);
 });
 
-test("buildProjection produces a relaxation payload with a widening band", () => {
-  const history = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 400 });
+test("buildProjection produces a relaxation payload with a bracketing band and c:0 coeffs", () => {
+  // n=400 → ~133h of history so the 48h backtest horizon has samples (mae48 is a number).
+  const history = synthConst({ a: 0.05, b: 0.01, air: 10, n: 400 });
   const seed = history[history.length - 1];
   const forecastSeries = Array.from({ length: 48 }, (_, i) => ({
     epoch: seed.epoch + (i + 1) * 3600,
-    air: 20,
+    air: 10,
     windSpeed: 2,
+    windDir: 180,
   }));
   const p = buildProjection(history, forecastSeries);
   assert.equal(p.model, "relaxation");
   assert.ok(p.coeffs && p.coeffs.a > 0);
+  assert.equal(p.coeffs.c, 0); // intercept dropped
   assert.equal(p.horizonH, 48);
-  // first point is the seed with a zero-width band
-  assert.equal(p.points[0].epoch, seed.epoch);
-  assert.equal(p.points[0].lower, p.points[0].upper);
-  // every point brackets its center, band never inverts
+  assert.equal(p.points[0].epoch, seed.epoch); // seed first
+  assert.equal(p.points[0].lower, p.points[0].upper); // zero-width band at the seed
   for (const pt of p.points) assert.ok(pt.lower <= pt.water && pt.water <= pt.upper);
   assert.equal(typeof p.backtest.mae48, "number");
 });
 
-test("buildProjection falls back to flat persistence on a non-physical fit", () => {
-  const history = synthReadings({ a: 0, b: 0, c: 0, n: 300 }); // flat water → fit not ok
+test("buildProjection drives the roll-forward with the SMOOTHED air, damping a forecast spike", () => {
+  // History air steady at 10 (24h+ of it); water relaxes to ~10. Forecast air
+  // jumps to 30 instantly. The seam-smoothed driver averages the recent 10s with
+  // the new 30, so the first projected step barely moves — far less than a
+  // raw-instantaneous-air roll-forward with the same coeffs would.
+  const history = synthConst({ a: 0.05, b: 0, air: 10, n: 100 }); // 100*20min ≈ 33h
   const seed = history[history.length - 1];
-  const forecastSeries = [
-    { epoch: seed.epoch + 3600, air: 30, windSpeed: 9 },
-    { epoch: seed.epoch + 7200, air: 2, windSpeed: 0 },
-  ];
+  const forecastSeries = Array.from({ length: 6 }, (_, i) => ({
+    epoch: seed.epoch + (i + 1) * 3600,
+    air: 30,
+    windSpeed: 0,
+    windDir: 180,
+  }));
   const p = buildProjection(history, forecastSeries);
-  assert.equal(p.model, "persistence");
-  assert.equal(p.coeffs, null);
-  // projected centers are flat at the seed water despite wild air/wind
-  assert.equal(p.points[1].water, p.points[0].water);
-  assert.equal(p.points[2].water, p.points[0].water);
+  assert.ok(p.coeffs && p.coeffs.a > 0);
+  // Reference: roll the SAME coeffs forward on the RAW (unsmoothed) forecast air.
+  const rawRoll = rollForward({ epoch: seed.epoch, water: seed.water }, forecastSeries, p.coeffs);
+  const smoothedStep = Math.abs(p.points[1].water - p.points[0].water);
+  const rawStep = Math.abs(rawRoll[0].water - seed.water);
+  assert.ok(smoothedStep < rawStep, `smoothed step ${smoothedStep} should be < raw step ${rawStep}`);
 });
 
-test("buildProjection attaches air/windSpeed/windDir (seed from history, rest from the forecast)", () => {
-  const history = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 400 });
+test("buildProjection seam smoothing includes the history tail (not a cold start)", () => {
+  // If the first forecast point's driver ignored history, its smoothed air would
+  // equal the first forecast air (30). Because the 24h tail of 10s is included,
+  // the effective driver is far below 30 — provable via the damped first step:
+  // water must move DOWN toward ~10, not UP toward 30.
+  const history = synthConst({ a: 0.05, b: 0, air: 10, n: 100 });
+  const seed = history[history.length - 1]; // seed water ~10.x, below 30
+  const forecastSeries = Array.from({ length: 3 }, (_, i) => ({
+    epoch: seed.epoch + (i + 1) * 3600,
+    air: 30,
+    windSpeed: 0,
+    windDir: 180,
+  }));
+  const p = buildProjection(history, forecastSeries);
+  // A cold-started (forecast-only) driver would pull water UP toward 30.
+  assert.ok(p.points[1].water <= p.points[0].water + 0.1,
+    `first step ${p.points[1].water} vs seed ${p.points[0].water} — tail should hold the driver near 10`);
+});
+
+test("buildProjection stores RAW forecast air/wind on points (smoothing is model-internal)", () => {
+  const history = synthConst({ a: 0.05, b: 0.01, air: 10, n: 120 });
   const seed = history[history.length - 1];
   seed.windDir = 210; // last observed reading carries a bearing
   const forecastSeries = Array.from({ length: 3 }, (_, i) => ({
     epoch: seed.epoch + (i + 1) * 3600,
-    air: 18 + i,
+    air: 18 + i, // raw forecast air, varies — must appear verbatim on points
     windSpeed: 4 + i,
     windDir: 90 + i,
   }));
   const p = buildProjection(history, forecastSeries);
-  // seed point carries the last observed values
-  assert.equal(p.points[0].air, seed.air);
+  assert.equal(p.points[0].air, seed.air); // seed shows the last observed air
   assert.equal(p.points[0].windSpeed, seed.windSpeed);
   assert.equal(p.points[0].windDir, 210);
-  // first forecast point carries the forecast entry's values
-  assert.equal(p.points[1].air, 18);
+  assert.equal(p.points[1].air, 18); // first forecast point shows RAW forecast air, not smoothed
   assert.equal(p.points[1].windSpeed, 4);
   assert.equal(p.points[1].windDir, 90);
+});
+
+test("buildProjection falls back to flat persistence on a non-physical fit", () => {
+  const history = synthConst({ a: 0, b: 0, air: 10, n: 120 }); // flat water → fit not ok
+  const seed = history[history.length - 1];
+  const forecastSeries = [
+    { epoch: seed.epoch + 3600, air: 30, windSpeed: 9, windDir: 10 },
+    { epoch: seed.epoch + 7200, air: 2, windSpeed: 0, windDir: 20 },
+  ];
+  const p = buildProjection(history, forecastSeries);
+  assert.equal(p.model, "persistence");
+  assert.equal(p.coeffs, null);
+  assert.equal(p.points[1].water, p.points[0].water); // flat despite wild air/wind
+  assert.equal(p.points[2].water, p.points[0].water);
+});
+
+test("smoothAirSeries replaces air with the trailing-window mean, preserving other fields", () => {
+  const series = [
+    { epoch: 0, air: 10, windSpeed: 1 },
+    { epoch: 3600, air: 20, windSpeed: 2 },
+    { epoch: 7200, air: 30, windSpeed: 3 },
+  ];
+  const out = smoothAirSeries(series, 2); // 2h window = 7200s, inclusive
+  assert.deepEqual(out.map((e) => e.air), [10, 15, 20]);
+  // i=0 → {10}; i=1 window [-3600,3600] → {10,20}=15; i=2 window [0,7200] → {10,20,30}=20
+  assert.deepEqual(out.map((e) => e.windSpeed), [1, 2, 3]); // other fields preserved
+  assert.equal(out[0].epoch, 0); // epoch preserved
+  assert.notEqual(out, series); // new array, not mutated in place
+});
+
+test("smoothAirSeries drops entries older than the window", () => {
+  const series = [
+    { epoch: 0, air: 10 },
+    { epoch: 3600, air: 20 },
+    { epoch: 100000, air: 30 }, // far in the future — window holds only itself
+  ];
+  const out = smoothAirSeries(series, 2);
+  assert.equal(out[2].air, 30); // 100000 window = [92800,100000]; earlier entries excluded
+});
+
+test("smoothAirSeries averages only non-null airs; empty window → null", () => {
+  const series = [
+    { epoch: 0, air: null },
+    { epoch: 3600, air: 20 },
+  ];
+  const out = smoothAirSeries(series, 2);
+  assert.equal(out[0].air, null); // window holds only its own null → null
+  assert.equal(out[1].air, 20); // null neighbor skipped, mean of {20}
+});
+
+test("smoothAirSeries on a single element returns its own air", () => {
+  assert.deepEqual(smoothAirSeries([{ epoch: 5, air: 12.5 }], 24), [{ epoch: 5, air: 12.5 }]);
 });
