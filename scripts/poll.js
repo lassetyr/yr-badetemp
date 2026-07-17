@@ -160,7 +160,7 @@ async function fetchHistory() {
   const cutoff = Math.floor(Date.now() / 1000) - FIT_WINDOW_DAYS * 86400;
   const url =
     `${SUPABASE_URL}/rest/v1/readings` +
-    `?select=epoch,water,air,wind_speed&location_id=eq.${STORAGE_ID}` +
+    `?select=epoch,water,air,wind_speed,wind_dir&location_id=eq.${STORAGE_ID}` +
     `&epoch=gte.${cutoff}&order=epoch.desc`;
   // Fetch newest-first so Supabase's row cap drops the oldest rows (not the newest).
   // We'll reverse the array below to restore oldest-first for the model.
@@ -175,7 +175,7 @@ async function fetchHistory() {
     const rows = await res.json();
     // rows are newest-first (epoch.desc); reverse to oldest-first so the model
     // fits over consecutive pairs and buildProjection seeds from the newest row.
-    return rows.map((r) => ({ epoch: r.epoch, water: r.water, air: r.air, windSpeed: r.wind_speed })).reverse();
+    return rows.map((r) => ({ epoch: r.epoch, water: r.water, air: r.air, windSpeed: r.wind_speed, windDir: r.wind_dir })).reverse();
   } catch (err) {
     console.error(`Network error fetching history: ${err.message}`);
     return [];
