@@ -21,3 +21,26 @@ create policy "Public read access"
   for select
   to anon
   using (true);
+
+-- Latest 48h water-temperature projection, one row per location, REPLACED on
+-- every poll (upsert on the location_id primary key). This is NOT append-only —
+-- it deliberately differs from `readings`; only the newest projection is kept.
+create table if not exists forecast (
+  location_id  text primary key,
+  generated_at timestamptz not null,
+  payload      jsonb not null
+);
+-- payload shape (built by buildProjection in scripts/lib.js):
+--   { horizonH, model: "relaxation"|"persistence", coeffs: {a,b,c}|null,
+--     backtest: {mae6,mae12,mae24,mae48},
+--     points: [ { epoch, water, lower, upper }, ... ] }
+
+-- Public read-only access for the static chart (anon = publishable key). Writes
+-- use the service_role key, which bypasses RLS.
+alter table forecast enable row level security;
+
+create policy "Public read access"
+  on forecast
+  for select
+  to anon
+  using (true);
