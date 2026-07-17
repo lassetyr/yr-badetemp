@@ -9,6 +9,7 @@ import {
   extractForecastSeries,
   fitRelaxation,
   rollForward,
+  backtestError,
   HORIZON_H,
 } from "../scripts/lib.js";
 
@@ -332,4 +333,26 @@ test("rollForward with zero coeffs is flat persistence", () => {
   const series = [{ epoch: 3600, air: 25, windSpeed: 5 }, { epoch: 7200, air: 5, windSpeed: 0 }];
   const pts = rollForward(seed, series, { a: 0, b: 0, c: 0 });
   assert.deepEqual(pts.map((p) => p.water), [12.3, 12.3]);
+});
+
+test("backtestError is ~0 when the model reproduces the data exactly", () => {
+  const coeffs = { a: 0.05, b: 0.01, c: -0.002 };
+  const r = synthReadings({ ...coeffs, n: 600 });
+  const err = backtestError(r, coeffs, [6, 12, 24]);
+  for (const h of [6, 12, 24]) {
+    assert.ok(err[h] != null, `err[${h}] should have samples`);
+    assert.ok(err[h] < 0.05, `err[${h}]=${err[h]} should be tiny`);
+  }
+});
+
+test("backtestError with zero coeffs (persistence) has positive error on drifting water", () => {
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0.01, n: 600 });
+  const err = backtestError(r, { a: 0, b: 0, c: 0 }, [24]);
+  assert.ok(err[24] > 0.1, `persistence error ${err[24]} should be sizeable`);
+});
+
+test("backtestError returns null for a horizon with no samples", () => {
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0, n: 20 });
+  const err = backtestError(r, { a: 0.05, b: 0.01, c: 0 }, [48]);
+  assert.equal(err[48], null);
 });

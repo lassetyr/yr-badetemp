@@ -188,3 +188,58 @@ export function rollForward(seed, forecastSeries, coeffs, opts = {}) {
   }
   return out;
 }
+
+// Nearest entry to `t` (seconds) within `tolS`, by |epoch - t|. Linear scan —
+// arrays here are at most a few thousand rows, called from a background poll.
+function nearestByEpoch(arr, t, tolS) {
+  let best = null;
+  let bestGap = Infinity;
+  for (const e of arr) {
+    const gap = Math.abs(e.epoch - t);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = e;
+    }
+  }
+  return best && bestGap <= tolS ? best : null;
+}
+
+// Walk-forward backtest: from strided origin readings, roll the fitted model
+// forward using the ACTUAL later readings as the air/wind driver, and compare
+// the projection against the real water reading nearest each horizon. Returns
+// mean absolute error per horizon (°C), or null where no samples exist. This
+// measures MODEL error only (perfect-input proxy); it does not see met.no's own
+// forecast error, so callers inflate the resulting band.
+export function backtestError(readings, coeffs, horizonsH = BACKTEST_HORIZONS, opts = {}) {
+  const stride = opts.stride ?? BACKTEST_STRIDE;
+  const tolS = opts.toleranceS ?? 3600;
+  const maxH = Math.max(...horizonsH);
+  const sum = {};
+  const count = {};
+  for (const h of horizonsH) {
+    sum[h] = 0;
+    count[h] = 0;
+  }
+  for (let i = 0; i < readings.length; i += stride) {
+    const origin = readings[i];
+    if (origin.water == null) continue;
+    const proj = rollForward(
+      { epoch: origin.epoch, water: origin.water },
+      readings.slice(i + 1),
+      coeffs,
+      { horizonH: maxH },
+    );
+    if (proj.length === 0) continue;
+    for (const h of horizonsH) {
+      const targetT = origin.epoch + h * 3600;
+      const pred = nearestByEpoch(proj, targetT, tolS);
+      const actual = nearestByEpoch(readings, targetT, tolS);
+      if (pred == null || actual == null || actual.water == null) continue;
+      sum[h] += Math.abs(pred.water - actual.water);
+      count[h] += 1;
+    }
+  }
+  const out = {};
+  for (const h of horizonsH) out[h] = count[h] > 0 ? sum[h] / count[h] : null;
+  return out;
+}
