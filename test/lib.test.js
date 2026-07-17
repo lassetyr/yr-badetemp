@@ -10,6 +10,7 @@ import {
   fitRelaxation,
   rollForward,
   backtestError,
+  buildProjection,
   HORIZON_H,
 } from "../scripts/lib.js";
 
@@ -358,4 +359,39 @@ test("backtestError returns null for a horizon with no samples", () => {
   const r = synthReadings({ a: 0.05, b: 0.01, c: 0, n: 20 });
   const err = backtestError(r, { a: 0.05, b: 0.01, c: 0 }, [48]);
   assert.equal(err[48], null);
+});
+
+test("buildProjection produces a relaxation payload with a widening band", () => {
+  const history = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 400 });
+  const seed = history[history.length - 1];
+  const forecastSeries = Array.from({ length: 48 }, (_, i) => ({
+    epoch: seed.epoch + (i + 1) * 3600,
+    air: 20,
+    windSpeed: 2,
+  }));
+  const p = buildProjection(history, forecastSeries);
+  assert.equal(p.model, "relaxation");
+  assert.ok(p.coeffs && p.coeffs.a > 0);
+  assert.equal(p.horizonH, 48);
+  // first point is the seed with a zero-width band
+  assert.equal(p.points[0].epoch, seed.epoch);
+  assert.equal(p.points[0].lower, p.points[0].upper);
+  // every point brackets its center, band never inverts
+  for (const pt of p.points) assert.ok(pt.lower <= pt.water && pt.water <= pt.upper);
+  assert.equal(typeof p.backtest.mae48, "number");
+});
+
+test("buildProjection falls back to flat persistence on a non-physical fit", () => {
+  const history = synthReadings({ a: 0, b: 0, c: 0, n: 300 }); // flat water → fit not ok
+  const seed = history[history.length - 1];
+  const forecastSeries = [
+    { epoch: seed.epoch + 3600, air: 30, windSpeed: 9 },
+    { epoch: seed.epoch + 7200, air: 2, windSpeed: 0 },
+  ];
+  const p = buildProjection(history, forecastSeries);
+  assert.equal(p.model, "persistence");
+  assert.equal(p.coeffs, null);
+  // projected centers are flat at the seed water despite wild air/wind
+  assert.equal(p.points[1].water, p.points[0].water);
+  assert.equal(p.points[2].water, p.points[0].water);
 });

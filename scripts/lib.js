@@ -243,3 +243,48 @@ export function backtestError(readings, coeffs, horizonsH = BACKTEST_HORIZONS, o
   for (const h of horizonsH) out[h] = count[h] > 0 ? sum[h] / count[h] : null;
   return out;
 }
+
+const round1 = (v) => Math.round(v * 10) / 10;
+
+// Linear-interpolate the per-horizon backtest error at hour h, clamped to the
+// measured endpoints; falls back to FALLBACK_ERR when no horizon has samples.
+function interpError(err, h) {
+  const pts = BACKTEST_HORIZONS.filter((k) => err[k] != null).map((k) => [k, err[k]]);
+  if (pts.length === 0) return FALLBACK_ERR;
+  if (h <= pts[0][0]) return pts[0][1];
+  if (h >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (h <= pts[i][0]) {
+      const [h0, e0] = pts[i - 1];
+      const [h1, e1] = pts[i];
+      return e0 + ((e1 - e0) * (h - h0)) / (h1 - h0);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+// Assemble the stored forecast payload: fit the model (or fall back to flat
+// persistence), roll forward on the met.no forecast, and wrap each projected
+// point in an INFLATE-scaled backtest band. points[0] is the seed with a
+// zero-width band so the dashed line joins the solid line at "now".
+export function buildProjection(history, forecastSeries, opts = {}) {
+  const horizonH = opts.horizonH ?? HORIZON_H;
+  const fit = fitRelaxation(history);
+  const coeffs = fit.ok ? { a: fit.a, b: fit.b, c: fit.c } : { a: 0, b: 0, c: 0 };
+  const seed = history[history.length - 1];
+  const rolled = rollForward({ epoch: seed.epoch, water: seed.water }, forecastSeries, coeffs, { horizonH });
+  const err = backtestError(history, coeffs, BACKTEST_HORIZONS);
+  const points = [{ epoch: seed.epoch, water: round1(seed.water), lower: round1(seed.water), upper: round1(seed.water) }];
+  for (const p of rolled) {
+    const h = (p.epoch - seed.epoch) / 3600;
+    const e = INFLATE * interpError(err, h);
+    points.push({ epoch: p.epoch, water: round1(p.water), lower: round1(p.water - e), upper: round1(p.water + e) });
+  }
+  return {
+    horizonH,
+    model: fit.ok ? "relaxation" : "persistence",
+    coeffs: fit.ok ? coeffs : null,
+    backtest: { mae6: err[6], mae12: err[12], mae24: err[24], mae48: err[48] },
+    points,
+  };
+}
