@@ -2,6 +2,17 @@
 
 const num = (v) => (typeof v === "number" ? v : null);
 
+// --- Forecast model tunables ------------------------------------------------
+export const FIT_WINDOW_DAYS = 30;   // history window queried for the fit
+export const MIN_GAP_S = 300;        // ignore consecutive pairs closer than 5 min
+export const MAX_GAP_S = 5400;       // ...or farther apart than 90 min (feed gaps)
+export const MIN_PAIRS = 50;         // min usable pairs before the fit is trusted
+export const HORIZON_H = 48;         // projection horizon (hours)
+export const INFLATE = 1.3;          // band inflation for met.no forecast-input error
+export const BACKTEST_HORIZONS = [6, 12, 24, 48];
+export const BACKTEST_STRIDE = 6;    // subsample origins ~every 2h at 20-min cadence
+export const FALLBACK_ERR = 0.5;     // band half-width (°C) when backtest has no data
+
 // Find the feature with `locationId` and return a canonical reading,
 // or null if absent or missing a numeric water temperature.
 export function extractReading(geojson, locationId) {
@@ -100,4 +111,56 @@ export function extractForecastSeries(json) {
     out.push({ epoch, air, windSpeed: num(details?.wind_speed) });
   }
   return out;
+}
+
+// 3x3 determinant.
+function det3(m) {
+  return (
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+    m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+    m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+  );
+}
+
+// Solve Ax = y for a 3x3 A by Cramer's rule. Returns [x0,x1,x2] or null when the
+// system is singular/near-singular.
+function solve3(A, y) {
+  const d = det3(A);
+  if (!Number.isFinite(d) || Math.abs(d) < 1e-12) return null;
+  const withCol = (j) => A.map((row, i) => row.map((v, k) => (k === j ? y[i] : v)));
+  return [det3(withCol(0)) / d, det3(withCol(1)) / d, det3(withCol(2)) / d];
+}
+
+// Least-squares fit of dWater/dt = a*(air-water) + b*windSpeed + c over
+// consecutive reading pairs. Only pairs with a sane time gap and all predictors
+// present contribute. Returns {a,b,c,n,ok}; ok gates the caller into the
+// persistence fallback when the fit is untrustworthy or non-physical (a<=0).
+export function fitRelaxation(readings, opts = {}) {
+  const minGap = opts.minGapS ?? MIN_GAP_S;
+  const maxGap = opts.maxGapS ?? MAX_GAP_S;
+  const minPairs = opts.minPairs ?? MIN_PAIRS;
+  const S = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  const rhs = [0, 0, 0];
+  let n = 0;
+  for (let i = 0; i < readings.length - 1; i++) {
+    const r0 = readings[i];
+    const r1 = readings[i + 1];
+    const gap = r1.epoch - r0.epoch;
+    if (gap < minGap || gap > maxGap) continue;
+    if (r0.water == null || r1.water == null || r0.air == null || r0.windSpeed == null) continue;
+    const dtH = gap / 3600;
+    const rate = (r1.water - r0.water) / dtH;
+    const x = [r0.air - r0.water, r0.windSpeed, 1];
+    for (let a = 0; a < 3; a++) {
+      for (let b = 0; b < 3; b++) S[a][b] += x[a] * x[b];
+      rhs[a] += x[a] * rate;
+    }
+    n++;
+  }
+  if (n < minPairs) return { a: 0, b: 0, c: 0, n, ok: false };
+  const sol = solve3(S, rhs);
+  if (!sol) return { a: 0, b: 0, c: 0, n, ok: false };
+  const [a, b, c] = sol;
+  const ok = Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(c) && a > 0;
+  return { a: ok ? a : 0, b: ok ? b : 0, c: ok ? c : 0, n, ok };
 }

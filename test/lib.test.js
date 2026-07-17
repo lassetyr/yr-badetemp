@@ -7,6 +7,7 @@ import {
   extractForecast,
   buildRow,
   extractForecastSeries,
+  fitRelaxation,
 } from "../scripts/lib.js";
 
 const SAMPLE = {
@@ -248,4 +249,50 @@ test("extractForecastSeries returns ascending {epoch,air,windSpeed}, skipping en
 test("extractForecastSeries returns [] for a malformed response", () => {
   assert.deepEqual(extractForecastSeries({}), []);
   assert.deepEqual(extractForecastSeries(null), []);
+});
+
+// Generate readings by forward-integrating the exact relaxation model, so an
+// OLS fit must recover (a,b,c) to numerical precision. dtS default = 20 min.
+function synthReadings({ a, b, c, n, dtS = 1200, w0 = 15, epoch0 = 1_700_000_000 }) {
+  const readings = [];
+  let w = w0;
+  let epoch = epoch0;
+  for (let i = 0; i < n; i++) {
+    const air = 20 + 5 * Math.sin(i / 10);
+    const windSpeed = 2 + Math.abs(Math.sin(i / 7));
+    readings.push({ epoch, water: w, air, windSpeed });
+    const dtH = dtS / 3600;
+    w = w + dtH * (a * (air - w) + b * windSpeed + c);
+    epoch += dtS;
+  }
+  return readings;
+}
+
+test("fitRelaxation recovers the coefficients that generated the data", () => {
+  const r = synthReadings({ a: 0.05, b: 0.01, c: -0.002, n: 300 });
+  const fit = fitRelaxation(r);
+  assert.ok(fit.ok);
+  assert.ok(Math.abs(fit.a - 0.05) < 1e-3, `a=${fit.a}`);
+  assert.ok(Math.abs(fit.b - 0.01) < 1e-3, `b=${fit.b}`);
+  assert.ok(Math.abs(fit.c - -0.002) < 1e-3, `c=${fit.c}`);
+});
+
+test("fitRelaxation returns ok:false below MIN_PAIRS usable pairs", () => {
+  const fit = fitRelaxation(synthReadings({ a: 0.05, b: 0.01, c: 0, n: 10 }));
+  assert.equal(fit.ok, false);
+});
+
+test("fitRelaxation returns ok:false on a non-physical fit (flat water → a≤0)", () => {
+  // Constant water with varying air/wind: rate is 0 everywhere → a fits to ~0.
+  const r = synthReadings({ a: 0, b: 0, c: 0, n: 200 });
+  const fit = fitRelaxation(r);
+  assert.equal(fit.ok, false);
+});
+
+test("fitRelaxation skips pairs with an out-of-range time gap", () => {
+  const r = synthReadings({ a: 0.05, b: 0.01, c: 0, n: 120 });
+  r[60].epoch += 3 * 86400; // huge gap around index 60 → that pair excluded
+  const fit = fitRelaxation(r);
+  assert.ok(fit.ok);
+  assert.ok(fit.n < r.length - 1); // at least one pair dropped
 });
