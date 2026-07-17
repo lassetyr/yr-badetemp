@@ -8,6 +8,8 @@ import {
   buildRow,
   extractForecastSeries,
   fitRelaxation,
+  rollForward,
+  HORIZON_H,
 } from "../scripts/lib.js";
 
 const SAMPLE = {
@@ -295,4 +297,39 @@ test("fitRelaxation skips pairs with an out-of-range time gap", () => {
   const fit = fitRelaxation(r);
   assert.ok(fit.ok);
   assert.ok(fit.n < r.length - 1); // at least one pair dropped
+});
+
+test("rollForward relaxes water toward the forecast air temperature", () => {
+  const seed = { epoch: 1000, water: 10 };
+  const hourly = Array.from({ length: 5 }, (_, i) => ({
+    epoch: 1000 + (i + 1) * 3600,
+    air: 20,
+    windSpeed: 0,
+  }));
+  const pts = rollForward(seed, hourly, { a: 0.1, b: 0, c: 0 });
+  assert.equal(pts.length, 5);
+  // w1 = 10 + 1*(0.1*(20-10)) = 11
+  assert.ok(Math.abs(pts[0].water - 11) < 1e-9);
+  // monotonically rising toward 20, never overshooting
+  for (let i = 1; i < pts.length; i++) assert.ok(pts[i].water > pts[i - 1].water);
+  assert.ok(pts[pts.length - 1].water < 20);
+});
+
+test("rollForward stops at the horizon and ignores past/nullish entries", () => {
+  const seed = { epoch: 0, water: 10 };
+  const series = [
+    { epoch: -3600, air: 20, windSpeed: 1 }, // before seed → ignored
+    { epoch: 3600, air: 20, windSpeed: 1 },
+    { epoch: 7200, air: null, windSpeed: 1 }, // null air → skipped
+    { epoch: (HORIZON_H + 1) * 3600, air: 20, windSpeed: 1 }, // past horizon → excluded
+  ];
+  const pts = rollForward(seed, series, { a: 0.1, b: 0, c: 0 });
+  assert.deepEqual(pts.map((p) => p.epoch), [3600]);
+});
+
+test("rollForward with zero coeffs is flat persistence", () => {
+  const seed = { epoch: 0, water: 12.3 };
+  const series = [{ epoch: 3600, air: 25, windSpeed: 5 }, { epoch: 7200, air: 5, windSpeed: 0 }];
+  const pts = rollForward(seed, series, { a: 0, b: 0, c: 0 });
+  assert.deepEqual(pts.map((p) => p.water), [12.3, 12.3]);
 });

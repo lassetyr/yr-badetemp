@@ -164,3 +164,27 @@ export function fitRelaxation(readings, opts = {}) {
   const ok = Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(c) && a > 0;
   return { a: ok ? a : 0, b: ok ? b : 0, c: ok ? c : 0, n, ok };
 }
+
+// Integrate dWater/dt = a*(air-water) + b*windSpeed + c forward from `seed`
+// along the forecast timestamps (Euler step, variable dt). Because each step
+// relaxes toward that hour's forecast air, the trajectory self-corrects and
+// stays stable. Zero coeffs yield a flat line (persistence baseline).
+export function rollForward(seed, forecastSeries, coeffs, opts = {}) {
+  const horizonH = opts.horizonH ?? HORIZON_H;
+  const { a, b, c } = coeffs;
+  const cutoff = seed.epoch + horizonH * 3600;
+  let w = seed.water;
+  let tPrev = seed.epoch;
+  const out = [];
+  for (const f of forecastSeries) {
+    if (f.epoch <= seed.epoch) continue;
+    if (f.epoch > cutoff) break;
+    if (f.air == null || f.windSpeed == null) continue;
+    const dtH = (f.epoch - tPrev) / 3600;
+    if (dtH <= 0) continue;
+    w = w + dtH * (a * (f.air - w) + b * f.windSpeed + c);
+    out.push({ epoch: f.epoch, water: w });
+    tPrev = f.epoch;
+  }
+  return out;
+}
