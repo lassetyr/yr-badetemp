@@ -21,6 +21,7 @@ const RANGES = ["24h", "7d", "30d", "all"];
 
 // UI thresholds (policy lives here; src/data.js stays free of it).
 const STALE_THRESHOLD_SEC = 2 * 3600; // header "utdatert" badge
+const FORECAST_STALE_SEC = 3 * 3600; // drop a projection older than 3h (poller likely stalled)
 const TREND_SAMPLE = 3; // readings averaged at each end for the period trend
 let allReadings = [];
 let latest = null;
@@ -85,6 +86,12 @@ function osloParts(isoTime, opts) {
 
 function buildOption(readings, forecast, rangeKey, nowEpochSec) {
   const bounds = rangeBounds(rangeKey, nowEpochSec);
+  // When a projection is present, extend the right edge to its last point so the
+  // 48h dashed line + band aren't clipped by the now-pinned axis max.
+  const fcMaxMs = forecast?.line?.length
+    ? forecast.line[forecast.line.length - 1][0]
+    : null;
+  const axisMax = fcMaxMs != null && fcMaxMs > bounds.max ? fcMaxMs : bounds.max;
   const reducedMotion = window.matchMedia(
     "(prefers-reduced-motion: reduce)",
   ).matches;
@@ -161,7 +168,7 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
       // Right edge pinned to now; left edge spans the selected range (undefined
       // for "all", letting ECharts fit the earliest reading).
       min: bounds.min,
-      max: bounds.max,
+      max: axisMax,
       axisLabel: {
         // Drop labels that would collide rather than letting them overprint —
         // matters on narrow (mobile) widths where the time axis packs in ticks.
@@ -437,7 +444,14 @@ async function loadForecast() {
     });
     if (!res.ok) return false;
     const rows = await res.json();
-    forecast = mapForecast(rows[0]?.payload);
+    const row = rows[0];
+    // Drop a projection whose row is older than the staleness threshold — a
+    // stalled poller must not keep drawing a dashed line from an old seed.
+    const genEpoch = row?.generated_at
+      ? Math.floor(Date.parse(row.generated_at) / 1000)
+      : null;
+    const stale = genEpoch != null && nowEpoch() - genEpoch > FORECAST_STALE_SEC;
+    forecast = stale ? null : mapForecast(row?.payload);
     // Re-render so a freshly-loaded projection appears immediately, regardless
     // of whether loadData's render ran before `forecast` was set. Guard on
     // readings so we don't force the empty state before loadData populates them

@@ -154,7 +154,7 @@ export function waterTrend(readings, sampleSize) {
 // PostgREST returns an array; the caller reads [0]?.payload.
 export function forecastQueryUrl(baseUrl, locationId) {
   const params = new URLSearchParams();
-  params.set("select", "payload");
+  params.set("select", "payload,generated_at");
   params.set("location_id", `eq.${locationId}`);
   return `${baseUrl}/rest/v1/forecast?${params.toString()}`;
 }

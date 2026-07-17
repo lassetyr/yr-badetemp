@@ -359,7 +359,7 @@ test("forecastQueryUrl targets the forecast endpoint and filters by location", (
   const url = new URL(forecastQueryUrl(BASE, "0-10238"));
   assert.equal(url.origin + url.pathname, `${BASE}/rest/v1/forecast`);
   assert.equal(url.searchParams.get("location_id"), "eq.0-10238");
-  assert.equal(url.searchParams.get("select"), "payload");
+  assert.equal(url.searchParams.get("select"), "payload,generated_at");
 });
 
 test("mapForecast builds line + stacked band pairs from points", () => {
