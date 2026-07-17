@@ -84,12 +84,14 @@ role (the publishable key authenticates as `anon`). Writes use the secret key
 
 ### Scheduling reality
 
-GitHub's `schedule:` cron is best-effort and frequently drops sub-hourly runs,
-so the cron in `poll.yml` is only a fallback. The reliable path is an external
-scheduler (e.g. cron-job.org) hitting the `workflow_dispatch` REST endpoint —
-that's what `scripts/trigger.sh` documents and performs. The cron minutes
-(`7,27,47`) are intentionally offset off `:00/:20/:40` to dodge GitHub's most
-congested scheduler slots.
+The poll workflow has **no `schedule:` cron** — it is triggered solely by an
+external scheduler (e.g. cron-job.org) hitting the `workflow_dispatch` REST
+endpoint, which `scripts/trigger.sh` documents and performs. GitHub's own
+`schedule:` cron was dropped for two reasons: it is best-effort and frequently
+drops sub-hourly runs, and a second trigger would double-bill Actions minutes
+(both triggers fire independent, separately-billed runs; `concurrency` only
+serializes overlaps, it does not dedupe them). So the poll cadence lives
+entirely in the external scheduler's configuration.
 
 ## Conventions
 
@@ -113,8 +115,8 @@ congested scheduler slots.
   the unofficial endpoint), plus `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
 - Browser refresh cadence: `REFRESH_MS` in `app.js` (auto-refetches without page
   reload; pauses while the tab is hidden).
-- Poll cadence: the `cron` in `.github/workflows/poll.yml` and the external
-  scheduler.
+- Poll cadence: configured in the external scheduler (cron-job.org) that hits
+  `workflow_dispatch`; the workflow itself has no `schedule:` cron.
 
 ## Design docs
 
