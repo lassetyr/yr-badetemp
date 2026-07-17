@@ -69,6 +69,9 @@ Two halves share pure helpers but never import each other:
   unofficial GeoJSON endpoint (`www.yr.no/api/v0/watertemperatures/...`, one call
   carrying water + air + wind) via `extractReading`/`toRow` — a temporary
   scaffold so data keeps flowing until the key lands; it is removed at cutover.
+  For forecast fitting, `fetchHistory` paginates through the reading history so
+  the fit accesses the full `FIT_WINDOW_DAYS` window rather than Supabase's
+  default 1000-row read cap.
 - **Browser app** (`index.html` + `app.js` → `src/data.js` + `src/config.js`):
   fetches from Supabase's PostgREST endpoint and renders with ECharts. `app.js`
   owns all I/O and DOM; `src/data.js` is pure and holds every derived/formatting
@@ -87,15 +90,19 @@ Two halves share pure helpers but never import each other:
 
 - **Forecast** (`scripts/poll.js:updateForecast` → `scripts/lib.js`): each poll
   also builds a best-effort 48h water-temperature projection. `lib.js` fits a
-  relaxation model `dWater/dt = a·(air−water) + b·wind + c` from ~30 days of
-  history (`fitRelaxation`), rolls it forward on the met.no forecast timeseries
-  (`extractForecastSeries` → `rollForward`), sizes a confidence band from a
-  walk-forward backtest (`backtestError`, inflated by `INFLATE=1.3` for
-  forecast-input error), and assembles the payload (`buildProjection`). `poll.js`
-  upserts one row into the `forecast` table (replace-on-write, keyed by
-  `location_id`). The browser reads it via `forecastQueryUrl`/`mapForecast`
-  (`src/data.js`) and draws a dashed line + shaded band. When the fit is
-  untrustworthy it falls back to flat persistence (`model: "persistence"`).
+  relaxation model `dWater/dt = a·(air−water) + b·wind` (no intercept, `c` always 0)
+  against a 24-hour trailing-mean air driver (`smoothAirSeries`, `SMOOTH_WINDOW_H`),
+  smoothing across the history→forecast seam so the early forecast averages real
+  observations rather than cold-starting (`fitRelaxation`). It rolls the projection
+  forward on the met.no forecast timeseries (`extractForecastSeries` → `rollForward`),
+  sizes a confidence band from a walk-forward backtest (`backtestError`, inflated by
+  `INFLATE=1.3` for forecast-input error), and assembles the payload (`buildProjection`).
+  The air/wind lines shown to the user remain the raw met.no forecast (smoothing is
+  internal to the water model). `poll.js` upserts one row into the `forecast` table
+  (replace-on-write, keyed by `location_id`). The browser reads it via
+  `forecastQueryUrl`/`mapForecast` (`src/data.js`) and draws a dashed line + shaded
+  band. When the fit is untrustworthy it falls back to flat persistence
+  (`model: "persistence"`).
 
 `lib.js` and `src/data.js` are deliberately I/O-free so the tests can exercise
 logic without network or DOM. When adding logic, put the pure part in those
@@ -151,7 +158,7 @@ entirely in the external scheduler's configuration.
 - Secrets: `YR_API_KEY` (official water API; **optional** — unset falls back to
   the unofficial endpoint), plus `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
 - Forecast model tunables (constants in `scripts/lib.js`): `FIT_WINDOW_DAYS`,
-  `MIN_GAP_S`/`MAX_GAP_S`, `MIN_PAIRS`, `HORIZON_H`, `INFLATE`,
+  `MIN_GAP_S`/`MAX_GAP_S`, `MIN_PAIRS`, `HORIZON_H`, `SMOOTH_WINDOW_H`, `INFLATE`,
   `BACKTEST_HORIZONS`/`BACKTEST_STRIDE`, `FALLBACK_ERR`.
 - Browser refresh cadence: `REFRESH_MS` in `app.js` (auto-refetches without page
   reload; pauses while the tab is hidden).
