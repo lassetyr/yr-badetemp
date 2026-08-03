@@ -473,18 +473,43 @@ const SUPABASE_HEADERS = {
   Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
 };
 
+// PostgREST truncates an unpaged read at 1000 rows without signalling it, so
+// long ranges ("30d", "Alle") must be paged or they silently show only the most
+// recent ~1000 readings. Mirrors `fetchHistory` in scripts/poll.js.
+const PAGE_SIZE = 1000;
+const MAX_PAGES = 20; // safety cap (20k rows ≫ any range we render)
+
 // Fetch the selected range from Supabase and re-render the chart. On failure,
 // leave the existing readings and chart intact — a transient network blip must
 // not blank a working chart. Returns true when fresh data was applied.
 async function loadData() {
-  const url = readingsQueryUrl(SUPABASE_URL, LOCATION_ID, currentRange, nowEpoch());
+  const now = nowEpoch();
+  const rows = [];
   try {
-    const res = await fetch(url, { cache: "no-store", headers: SUPABASE_HEADERS });
-    if (!res.ok) return false;
-    const rows = await res.json();
-    // Server returns newest-first (epoch.desc); reverse to oldest-first for the
-    // left-to-right time axis.
-    allReadings = rows.map(mapRow).reverse();
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const url = readingsQueryUrl(SUPABASE_URL, LOCATION_ID, currentRange, now, {
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+      });
+      const res = await fetch(url, { cache: "no-store", headers: SUPABASE_HEADERS });
+      // Abandon the whole load rather than render a partial history — a failed
+      // page 2 would otherwise silently truncate the chart, the very bug paging
+      // exists to fix.
+      if (!res.ok) return false;
+      const batch = await res.json();
+      rows.push(...batch);
+      if (batch.length < PAGE_SIZE) break; // last page reached
+    }
+    // Pages are offset-based, so a row inserted mid-fetch can shift the window
+    // and duplicate one row across a page boundary; dedupe by epoch. (Rows are
+    // newest-first, so the first occurrence wins.)
+    const seen = new Set();
+    allReadings = rows
+      .filter((r) => !seen.has(r.epoch) && seen.add(r.epoch))
+      // Server returns newest-first (epoch.desc); reverse to oldest-first for
+      // the left-to-right time axis.
+      .map(mapRow)
+      .reverse();
   } catch {
     return false;
   }

@@ -22,9 +22,14 @@ const COLUMNS = "time,epoch,water,air,wind_speed,wind_gust,wind_dir";
 // Build a PostgREST query URL for one location and time range. baseUrl is the
 // Supabase project URL with no trailing slash. Unknown/"all" ranges omit the
 // epoch lower bound (return the full history). Ordered newest-first
-// (epoch.desc) so that if a row cap is ever introduced it drops the OLDEST
-// rows, never the recent tail — callers reverse to oldest-first for display.
-export function readingsQueryUrl(baseUrl, locationId, rangeKey, nowEpoch) {
+// (epoch.desc) so that a truncated read drops the OLDEST rows, never the recent
+// tail — callers reverse to oldest-first for display.
+//
+// `page` ({limit, offset}) requests one page of that result. PostgREST caps an
+// unpaged read at 1000 rows *silently*, so any range that can exceed 1000
+// readings must be fetched page by page (see `loadData` in app.js) or the chart
+// quietly loses its oldest history.
+export function readingsQueryUrl(baseUrl, locationId, rangeKey, nowEpoch, page = {}) {
   const params = new URLSearchParams();
   params.set("select", COLUMNS);
   params.set("location_id", `eq.${locationId}`);
@@ -32,6 +37,8 @@ export function readingsQueryUrl(baseUrl, locationId, rangeKey, nowEpoch) {
   if (rangeKey in RANGE_SECONDS) {
     params.set("epoch", `gte.${nowEpoch - RANGE_SECONDS[rangeKey]}`);
   }
+  if (page.limit != null) params.set("limit", String(page.limit));
+  if (page.offset) params.set("offset", String(page.offset));
   return `${baseUrl}/rest/v1/readings?${params.toString()}`;
 }
 

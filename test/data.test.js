@@ -55,6 +55,32 @@ test("readingsQueryUrl '7d' and '30d' use correct windows", () => {
   assert.equal(u30.searchParams.get("epoch"), `gte.${now - 30 * 24 * 3600}`);
 });
 
+test("readingsQueryUrl omits limit/offset when no page is requested", () => {
+  const url = new URL(readingsQueryUrl(BASE, "0-10238", "all", 1000));
+  assert.equal(url.searchParams.get("limit"), null);
+  assert.equal(url.searchParams.get("offset"), null);
+});
+
+test("readingsQueryUrl sets limit/offset for a requested page", () => {
+  const url = new URL(readingsQueryUrl(BASE, "0-10238", "all", 1000, { limit: 1000, offset: 2000 }));
+  assert.equal(url.searchParams.get("limit"), "1000");
+  assert.equal(url.searchParams.get("offset"), "2000");
+});
+
+test("readingsQueryUrl page params coexist with the range's epoch bound", () => {
+  const now = 100 * 24 * 3600;
+  const url = new URL(readingsQueryUrl(BASE, "0-10238", "30d", now, { limit: 1000, offset: 1000 }));
+  assert.equal(url.searchParams.get("epoch"), `gte.${now - 30 * 24 * 3600}`);
+  assert.equal(url.searchParams.get("limit"), "1000");
+  assert.equal(url.searchParams.get("offset"), "1000");
+});
+
+test("readingsQueryUrl omits offset 0 but keeps the limit", () => {
+  const url = new URL(readingsQueryUrl(BASE, "0-10238", "all", 1000, { limit: 1000, offset: 0 }));
+  assert.equal(url.searchParams.get("limit"), "1000");
+  assert.equal(url.searchParams.get("offset"), null);
+});
+
 test("latestReadingUrl fetches the single newest reading regardless of range", () => {
   const url = new URL(latestReadingUrl(BASE, "0-10238"));
   assert.equal(url.origin + url.pathname, `${BASE}/rest/v1/readings`);

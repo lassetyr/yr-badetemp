@@ -79,7 +79,11 @@ Two halves share pure helpers but never import each other:
   snake_case→camelCase `mapRow`, and the glanceability logic (`waterStats`,
   `waterTrend`, `isStale`, `humanizeAge`, `degToArrow`, `toSeriesPairs`). Each is
   unit-tested in `test/data.test.js`. Range filtering is server-side, so
-  switching range re-fetches rather than filtering in memory.
+  switching range re-fetches rather than filtering in memory. `loadData` pages
+  that fetch (`readingsQueryUrl`'s `page` arg → `limit`/`offset`) for the same
+  reason `fetchHistory` does: PostgREST *silently* truncates an unpaged read at
+  1000 rows, which quietly dropped the oldest history from the `30d` and `Alle`
+  charts until they were paged.
 
   A refresh runs two independent queries in parallel (`refresh` in `app.js`):
   `loadLatest` fetches the single newest reading for the header (so "current
