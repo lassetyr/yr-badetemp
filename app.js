@@ -4,6 +4,7 @@ import {
   forecastQueryUrl,
   mapForecast,
   clampForecast,
+  forecastHorizonFor,
   mapRow,
   rangeBounds,
   toSeriesPairs,
@@ -24,13 +25,9 @@ const RANGES = ["24h", "7d", "30d", "all"];
 const STALE_THRESHOLD_SEC = 2 * 3600; // header "utdatert" badge
 const FORECAST_STALE_SEC = 3 * 3600; // drop a projection older than 3h (poller likely stalled)
 const TREND_SAMPLE = 3; // readings averaged at each end for the period trend
-// How far ahead (hours) to DRAW the 48h projection per selected range. The full
-// projection is always stored/fetched; wider ranges have room for all of it, and
-// 24t is trimmed so the observed data keeps its share of the chart.
-const FORECAST_HORIZON_H = { "24h": 12, "7d": 48, "30d": 48, "all": 48 };
 let allReadings = [];
 let latest = null;
-let forecast = null; // { line, lower, band } | null — the stored 48h projection
+let forecast = null; // { line, lower, band } | null — the stored 48h projection (drawn capped, see forecastHorizonFor)
 let refreshTimerId = null;
 
 // Which chart series are toggled on/off in the legend, persisted across reloads.
@@ -176,7 +173,7 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
   // Trim how much of the projection is drawn for the selected range (the full 48h
   // is always stored/fetched; only the display is capped). The clamped `fc` drives
   // both the series and the axis right-edge below.
-  const fc = clampForecast(forecast, nowEpochSec, FORECAST_HORIZON_H[rangeKey] ?? 48);
+  const fc = clampForecast(forecast, nowEpochSec, forecastHorizonFor(rangeKey));
   // When a projection is present, extend the right edge to its last drawn point so
   // the dashed line + band aren't clipped by the now-pinned axis max.
   const fcMaxMs = fc?.line?.length ? fc.line[fc.line.length - 1][0] : null;

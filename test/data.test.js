@@ -15,6 +15,7 @@ import {
   forecastQueryUrl,
   mapForecast,
   clampForecast,
+  forecastHorizonFor,
 } from "../src/data.js";
 
 const BASE = "https://proj.supabase.co";
@@ -471,4 +472,22 @@ test("clampForecast trims airLine and windLine to the horizon too", () => {
   const c = clampForecast(fc, FC_NOW, 12); // cutoff 44_200_000 → drop the 87_400_000 point
   assert.deepEqual(c.airLine, [[1_000_000, 18]]);
   assert.deepEqual(c.windLine, [[1_000_000, 3, 200]]); // third element preserved
+});
+
+test("forecastHorizonFor caps the drawn projection at 24h on the wide ranges", () => {
+  // Walk-forward validation (2026-09-07) found the model beats flat persistence
+  // only out to ~12h and is indistinguishable from it past 24h, so the dashed
+  // line stops where it stops claiming something. The poller still stores 48h.
+  assert.equal(forecastHorizonFor("7d"), 24);
+  assert.equal(forecastHorizonFor("30d"), 24);
+  assert.equal(forecastHorizonFor("all"), 24);
+});
+
+test("forecastHorizonFor keeps 24t at 12h so observations keep their share of the chart", () => {
+  assert.equal(forecastHorizonFor("24h"), 12);
+});
+
+test("forecastHorizonFor falls back to the 24h cap for an unknown range", () => {
+  assert.equal(forecastHorizonFor("bogus"), 24);
+  assert.equal(forecastHorizonFor(undefined), 24);
 });

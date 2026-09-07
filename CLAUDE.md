@@ -112,6 +112,15 @@ Two halves share pure helpers but never import each other:
   band. When the fit is untrustworthy it falls back to flat persistence
   (`model: "persistence"`).
 
+  **Stored horizon and drawn horizon differ on purpose.** The poller always
+  stores the full `HORIZON_H` (48h); `forecastHorizonFor` (`src/data.js`) caps
+  what the chart draws — 12h on the 24t range, 24h everywhere else — and
+  `clampForecast` trims every forecast series to it. The 24h cap is the
+  validation result, not taste: past ~24h the projection is statistically
+  indistinguishable from a flat line, so the dashed line stops where it stops
+  claiming anything. The extra stored hours are kept because they cost nothing
+  and are the only record available for re-validating the model later.
+
 `lib.js` and `src/data.js` are deliberately I/O-free so the tests can exercise
 logic without network or DOM. When adding logic, put the pure part in those
 files and keep side effects in `poll.js` / `app.js`.

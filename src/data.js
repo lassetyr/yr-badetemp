@@ -190,6 +190,21 @@ export function mapForecast(payload) {
   return { line, lower, band, airLine, windLine };
 }
 
+// Hours of projection to DRAW for a given range key. The poller always stores
+// the full HORIZON_H (48h); this caps only the display.
+//
+// 24h everywhere except the 24t view: walk-forward validation (2026-09-07)
+// showed the model beating flat persistence out to ~12h and matching it past
+// 24h, so the dashed line stops where it stops claiming anything. 24t is capped
+// tighter still, keeping the forecast to roughly half the observed window so the
+// measurements are not crowded out.
+const FORECAST_HORIZON_H = { "24h": 12, "7d": 24, "30d": 24, "all": 24 };
+const DEFAULT_FORECAST_HORIZON_H = 24;
+
+export function forecastHorizonFor(rangeKey) {
+  return FORECAST_HORIZON_H[rangeKey] ?? DEFAULT_FORECAST_HORIZON_H;
+}
+
 // Trim a mapped forecast ({line,lower,band}) to a display horizon: keep only the
 // pairs at or before `nowEpochSec + maxHorizonH` hours. line/lower/band share
 // timestamps, so filtering each by the same cutoff keeps them consistent. Returns
