@@ -90,7 +90,9 @@ body {
   margin: 1.5rem 0 0.5rem;
   text-align: center;
   font-size: 0.8rem;
-  opacity: 0.6;
+  /* Yr's terms require the attribution to be *clearly* marked, so this stays
+     legible rather than dimmed to the usual footnote level. */
+  opacity: 0.85;
 }
 
 @media (max-width: 600px) {

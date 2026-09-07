@@ -1,2 +1,6 @@
 node_modules/
 .DS_Store
+
+# Saved copy of Yr's badetemperatur API help article (reference only, ~100 KB
+# of vendored page assets — the canonical source is hjelp.yr.no).
+docs/yr.no/
