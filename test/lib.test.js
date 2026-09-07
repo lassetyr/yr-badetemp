@@ -12,6 +12,7 @@ import {
   HORIZON_H,
   smoothAirSeries,
   SMOOTH_WINDOW_H,
+  INFLATE,
 } from "../scripts/lib.js";
 
 const OFFICIAL_WATER = [
@@ -159,9 +160,10 @@ test("extractForecastSeries returns [] for a malformed response", () => {
   assert.deepEqual(extractForecastSeries(null), []);
 });
 
-// Generate readings by forward-integrating the relaxation model. The fit
-// recovers (a,b); c is a drift term injected into the data that the no-intercept
-// fit cannot represent (used in some tests). dtS default = 20 min.
+// Generate readings by forward-integrating a relaxation model. `a` is the only
+// term the fit can represent; `b` (wind) and `c` (drift) inject real effects into
+// the DATA that the single-parameter model deliberately cannot chase.
+// dtS default = 20 min.
 function synthReadings({ a, b, c, n, dtS = 1200, w0 = 15, epoch0 = 1_700_000_000 }) {
   const readings = [];
   let w = w0;
@@ -194,23 +196,27 @@ function synthConst({ a, b, air = 10, n, dtS = 1200, w0 = 15, epoch0 = 1_700_000
   return readings;
 }
 
-test("fitRelaxation recovers a and b and always reports c:0", () => {
-  // Data generated with c:0 (no intercept), so an intercept-free fit must recover a,b.
-  const r = synthReadings({ a: 0.05, b: 0.01, c: 0, n: 300 });
+test("fitRelaxation recovers a from pure relaxation data", () => {
+  const r = synthReadings({ a: 0.05, b: 0, c: 0, n: 300 });
   const fit = fitRelaxation(r);
   assert.ok(fit.ok);
   assert.ok(Math.abs(fit.a - 0.05) < 1e-3, `a=${fit.a}`);
-  assert.ok(Math.abs(fit.b - 0.01) < 1e-3, `b=${fit.b}`);
-  assert.equal(fit.c, 0); // the model no longer fits an intercept
 });
 
-test("fitRelaxation never fits an intercept even when the data drifts", () => {
-  // True rate carries a +0.05/h drift the model cannot represent; c must stay 0.
-  // The fit absorbs the drift into (a,b) and succeeds despite the unrepresentable constant.
-  const r = synthReadings({ a: 0.05, b: 0.01, c: 0.05, n: 300 });
-  const fit = fitRelaxation(r);
-  assert.equal(fit.c, 0);
-  assert.equal(fit.ok, true); // fit still succeeds (a>0) despite drift
+test("fitRelaxation exposes no wind or intercept coefficient", () => {
+  // The model is deliberately single-parameter: an unconstrained second term is
+  // what let the fitting window's mean drift ride out into the projection.
+  const fit = fitRelaxation(synthReadings({ a: 0.05, b: 0.01, c: 0, n: 300 }));
+  assert.equal(fit.b, undefined);
+  assert.equal(fit.c, undefined);
+});
+
+test("fitRelaxation still succeeds when the data carries drift it cannot represent", () => {
+  // True rate carries a +0.05/h drift with no term to absorb it; the fit must
+  // stay physical (a>0) rather than contorting to chase the constant.
+  const fit = fitRelaxation(synthReadings({ a: 0.05, b: 0.01, c: 0.05, n: 300 }));
+  assert.equal(fit.ok, true);
+  assert.ok(fit.a > 0);
 });
 
 test("fitRelaxation returns ok:false below MIN_PAIRS usable pairs", () => {
@@ -240,13 +246,41 @@ test("rollForward relaxes water toward the forecast air temperature", () => {
     air: 20,
     windSpeed: 0,
   }));
-  const pts = rollForward(seed, hourly, { a: 0.1, b: 0, c: 0 });
+  const pts = rollForward(seed, hourly, { a: 0.1 });
   assert.equal(pts.length, 5);
   // w1 = 10 + 1*(0.1*(20-10)) = 11
   assert.ok(Math.abs(pts[0].water - 11) < 1e-9);
   // monotonically rising toward 20, never overshooting
   for (let i = 1; i < pts.length; i++) assert.ok(pts[i].water > pts[i - 1].water);
   assert.ok(pts[pts.length - 1].water < 20);
+});
+
+test("rollForward holds water steady when air already equals it, whatever the wind", () => {
+  // The regression this model change fixes. The old b*wind term drifted ~1 °C
+  // over 48h here (measured against real history, 2026-09-07): wind is always
+  // positive, so a negative b acted as constant cooling with no feedback to
+  // pull it back. With one relaxation term, air == water is a fixed point.
+  const seed = { epoch: 0, water: 17 };
+  const series = Array.from({ length: 48 }, (_, i) => ({
+    epoch: (i + 1) * 3600,
+    air: 17,
+    windSpeed: 8,
+  }));
+  const pts = rollForward(seed, series, { a: 0.02 });
+  assert.equal(pts.length, 48);
+  for (const p of pts) assert.equal(p.water, 17);
+});
+
+test("rollForward projects across forecast entries that carry no wind", () => {
+  // Wind no longer drives the model, so a met.no entry missing it must not
+  // truncate the projection.
+  const seed = { epoch: 0, water: 10 };
+  const series = [
+    { epoch: 3600, air: 20, windSpeed: null },
+    { epoch: 7200, air: 20 }, // field absent entirely
+  ];
+  const pts = rollForward(seed, series, { a: 0.1 });
+  assert.deepEqual(pts.map((p) => p.epoch), [3600, 7200]);
 });
 
 test("rollForward stops at the horizon and ignores past/nullish entries", () => {
@@ -257,20 +291,22 @@ test("rollForward stops at the horizon and ignores past/nullish entries", () => 
     { epoch: 7200, air: null, windSpeed: 1 }, // null air → skipped
     { epoch: (HORIZON_H + 1) * 3600, air: 20, windSpeed: 1 }, // past horizon → excluded
   ];
-  const pts = rollForward(seed, series, { a: 0.1, b: 0, c: 0 });
+  const pts = rollForward(seed, series, { a: 0.1 });
   assert.deepEqual(pts.map((p) => p.epoch), [3600]);
 });
 
 test("rollForward with zero coeffs is flat persistence", () => {
   const seed = { epoch: 0, water: 12.3 };
   const series = [{ epoch: 3600, air: 25, windSpeed: 5 }, { epoch: 7200, air: 5, windSpeed: 0 }];
-  const pts = rollForward(seed, series, { a: 0, b: 0, c: 0 });
+  const pts = rollForward(seed, series, { a: 0 });
   assert.deepEqual(pts.map((p) => p.water), [12.3, 12.3]);
 });
 
 test("backtestError is small when the model reproduces the data", () => {
-  const coeffs = { a: 0.05, b: 0.01, c: -0.002 };
-  const r = synthReadings({ ...coeffs, n: 600 });
+  // Data generated from the same single-parameter model the backtest rolls
+  // forward, so any error here is integration error, not model mismatch.
+  const coeffs = { a: 0.05 };
+  const r = synthReadings({ a: 0.05, b: 0, c: 0, n: 600 });
   const err = backtestError(r, coeffs, [6, 12, 24]);
   for (const h of [6, 12, 24]) {
     assert.ok(err[h] != null, `err[${h}] should have samples`);
@@ -293,7 +329,7 @@ test("backtestError returns null for a horizon with no samples", () => {
   assert.equal(err[48], null);
 });
 
-test("buildProjection produces a relaxation payload with a bracketing band and c:0 coeffs", () => {
+test("buildProjection produces a relaxation payload with a bracketing band and a single coefficient", () => {
   // n=400 → ~133h of history so the 48h backtest horizon has samples (mae48 is a number).
   const history = synthConst({ a: 0.05, b: 0.01, air: 10, n: 400 });
   const seed = history[history.length - 1];
@@ -306,7 +342,8 @@ test("buildProjection produces a relaxation payload with a bracketing band and c
   const p = buildProjection(history, forecastSeries);
   assert.equal(p.model, "relaxation");
   assert.ok(p.coeffs && p.coeffs.a > 0);
-  assert.equal(p.coeffs.c, 0); // intercept dropped
+  assert.equal(p.coeffs.b, undefined); // wind term deleted
+  assert.equal(p.coeffs.c, undefined); // intercept deleted
   assert.equal(p.horizonH, 48);
   assert.equal(p.points[0].epoch, seed.epoch); // seed first
   assert.equal(p.points[0].lower, p.points[0].upper); // zero-width band at the seed
@@ -386,6 +423,13 @@ test("buildProjection falls back to flat persistence on a non-physical fit", () 
   assert.equal(p.coeffs, null);
   assert.equal(p.points[1].water, p.points[0].water); // flat despite wild air/wind
   assert.equal(p.points[2].water, p.points[0].water);
+});
+
+test("INFLATE matches the measured band calibration", () => {
+  // Walk-forward validation over 6213 readings (2026-09-07) needed 1.20-1.37x to
+  // reach ~80% band coverage. Retuning this should follow a fresh measurement,
+  // not a hunch — hence the assertion.
+  assert.equal(INFLATE, 1.35);
 });
 
 test("smoothAirSeries replaces air with the trailing-window mean, preserving other fields", () => {

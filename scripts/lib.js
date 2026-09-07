@@ -8,7 +8,7 @@ export const MIN_GAP_S = 300;        // ignore consecutive pairs closer than 5 m
 export const MAX_GAP_S = 5400;       // ...or farther apart than 90 min (feed gaps)
 export const MIN_PAIRS = 50;         // min usable pairs before the fit is trusted
 export const HORIZON_H = 48;         // projection horizon (hours)
-export const INFLATE = 1.3;          // band inflation for met.no forecast-input error
+export const INFLATE = 1.35;         // band inflation for met.no forecast-input error
 export const BACKTEST_HORIZONS = [6, 12, 24, 48];
 export const BACKTEST_STRIDE = 6;    // subsample origins ~every 2h at 20-min cadence
 export const FALLBACK_ERR = 0.5;     // band half-width (°C) when backtest has no data
@@ -101,58 +101,52 @@ export function smoothAirSeries(series, windowH = SMOOTH_WINDOW_H) {
   });
 }
 
-// Solve a 2x2 system Ax = y by Cramer's rule. Returns [x0,x1] or null when the
-// system is singular/near-singular.
-function solve2(A, y) {
-  const d = A[0][0] * A[1][1] - A[0][1] * A[1][0];
-  if (!Number.isFinite(d) || Math.abs(d) < 1e-12) return null;
-  return [
-    (y[0] * A[1][1] - A[0][1] * y[1]) / d,
-    (A[0][0] * y[1] - y[0] * A[1][0]) / d,
-  ];
-}
-
-// Least-squares fit of dWater/dt = a*(air-water) + b*windSpeed (no intercept) over
-// consecutive reading pairs. Only pairs with a sane time gap and all predictors
-// present contribute. Returns {a,b,c,n,ok} where c is always 0; ok gates the caller into the
-// persistence fallback when the fit is untrustworthy or non-physical (a<=0).
+// Least-squares fit of dWater/dt = a*(air-water) over consecutive reading pairs.
+// Only pairs with a sane time gap and both predictors present contribute.
+// Returns {a,n,ok}; ok gates the caller into the persistence fallback when the
+// fit is untrustworthy or non-physical (a<=0).
+//
+// Single-parameter by design. An earlier version added a b*windSpeed term, but
+// wind speed is always positive while b fitted negative, so the term behaved as
+// a constant cooling with no feedback to correct it — it absorbed the fitting
+// window's mean drift and extrapolated it forever. Walk-forward validation over
+// 6213 readings (2026-09-07) measured -1.07 C of spurious drift at 48h and the
+// model losing to flat persistence at every horizon. Relaxation toward air is
+// self-correcting; a second unconstrained term is not. Do not re-add one without
+// re-running that validation.
 export function fitRelaxation(readings, opts = {}) {
   const minGap = opts.minGapS ?? MIN_GAP_S;
   const maxGap = opts.maxGapS ?? MAX_GAP_S;
   const minPairs = opts.minPairs ?? MIN_PAIRS;
-  const S = [[0, 0], [0, 0]];
-  const rhs = [0, 0];
+  let sxx = 0;
+  let sxy = 0;
   let n = 0;
   for (let i = 0; i < readings.length - 1; i++) {
     const r0 = readings[i];
     const r1 = readings[i + 1];
     const gap = r1.epoch - r0.epoch;
     if (gap < minGap || gap > maxGap) continue;
-    if (r0.water == null || r1.water == null || r0.air == null || r0.windSpeed == null) continue;
+    if (r0.water == null || r1.water == null || r0.air == null) continue;
     const dtH = gap / 3600;
     const rate = (r1.water - r0.water) / dtH;
-    const x = [r0.air - r0.water, r0.windSpeed]; // no intercept column
-    for (let a = 0; a < 2; a++) {
-      for (let b = 0; b < 2; b++) S[a][b] += x[a] * x[b];
-      rhs[a] += x[a] * rate;
-    }
+    const x = r0.air - r0.water;
+    sxx += x * x;
+    sxy += x * rate;
     n++;
   }
-  if (n < minPairs) return { a: 0, b: 0, c: 0, n, ok: false };
-  const sol = solve2(S, rhs);
-  if (!sol) return { a: 0, b: 0, c: 0, n, ok: false };
-  const [a, b] = sol;
-  const ok = Number.isFinite(a) && Number.isFinite(b) && a > 0;
-  return { a: ok ? a : 0, b: ok ? b : 0, c: 0, n, ok };
+  if (n < minPairs || sxx < 1e-12) return { a: 0, n, ok: false };
+  const a = sxy / sxx;
+  const ok = Number.isFinite(a) && a > 0;
+  return { a: ok ? a : 0, n, ok };
 }
 
-// Integrate dWater/dt = a*(air-water) + b*windSpeed + c forward from `seed`
-// along the forecast timestamps (Euler step, variable dt). Because each step
-// relaxes toward that hour's forecast air, the trajectory self-corrects and
-// stays stable. Zero coeffs yield a flat line (persistence baseline).
+// Integrate dWater/dt = a*(air-water) forward from `seed` along the forecast
+// timestamps (Euler step, variable dt). Because each step relaxes toward that
+// hour's forecast air, the trajectory self-corrects and stays stable. A zero
+// coefficient yields a flat line (persistence baseline).
 export function rollForward(seed, forecastSeries, coeffs, opts = {}) {
   const horizonH = opts.horizonH ?? HORIZON_H;
-  const { a, b, c } = coeffs;
+  const { a } = coeffs;
   const cutoff = seed.epoch + horizonH * 3600;
   let w = seed.water;
   let tPrev = seed.epoch;
@@ -160,10 +154,10 @@ export function rollForward(seed, forecastSeries, coeffs, opts = {}) {
   for (const f of forecastSeries) {
     if (f.epoch <= seed.epoch) continue;
     if (f.epoch > cutoff) break;
-    if (f.air == null || f.windSpeed == null) continue;
+    if (f.air == null) continue; // wind is not a driver, so its absence is fine
     const dtH = (f.epoch - tPrev) / 3600;
     if (dtH <= 0) continue;
-    w = w + dtH * (a * (f.air - w) + b * f.windSpeed + c);
+    w = w + dtH * a * (f.air - w);
     out.push({ epoch: f.epoch, water: w });
     tPrev = f.epoch;
   }
@@ -256,7 +250,7 @@ export function buildProjection(history, forecastSeries, opts = {}) {
   // coupling reflects the slow signal water actually follows (not the diurnal wobble).
   const smoothHist = smoothAirSeries(history, windowH);
   const fit = fitRelaxation(smoothHist);
-  const coeffs = fit.ok ? { a: fit.a, b: fit.b, c: fit.c } : { a: 0, b: 0, c: 0 };
+  const coeffs = fit.ok ? { a: fit.a } : { a: 0 };
   const err = backtestError(smoothHist, coeffs, BACKTEST_HORIZONS);
   // Roll-forward driver: smooth air ACROSS THE SEAM so the first `windowH` hours
   // of forecast average real observations rather than cold-starting. Concatenate

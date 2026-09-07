@@ -89,16 +89,24 @@ Two halves share pure helpers but never import each other:
 
 - **Forecast** (`scripts/poll.js:updateForecast` → `scripts/lib.js`): each poll
   also builds a best-effort 48h water-temperature projection. `lib.js` fits a
-  relaxation model `dWater/dt = a·(air−water) + b·wind` (no intercept, `c` always 0)
+  single-parameter relaxation model `dWater/dt = a·(air−water)`
   against a 24-hour trailing-mean air driver (`smoothAirSeries`, `SMOOTH_WINDOW_H`)
   via `fitRelaxation`. `buildProjection` smooths that driver across the
   history→forecast seam so the early forecast averages real observations rather
   than cold-starting, then rolls the projection
   forward on the met.no forecast timeseries (`extractForecastSeries` → `rollForward`),
   sizes a confidence band from a walk-forward backtest (`backtestError`, inflated by
-  `INFLATE=1.3` for forecast-input error), and assembles the payload (`buildProjection`).
+  `INFLATE=1.35` for forecast-input error), and assembles the payload (`buildProjection`).
   The air/wind lines shown to the user remain the raw met.no forecast (smoothing is
-  internal to the water model). `poll.js` upserts one row into the `forecast` table
+  internal to the water model). **Wind is charted but does not drive the model.**
+  A `b·wind` term was removed 2026-09-07: wind speed is always positive while `b`
+  fitted negative, so it acted as constant cooling with no feedback, absorbing the
+  fitting window's mean drift and extrapolating it. Walk-forward validation over
+  6213 readings measured −1.07 °C of spurious drift at 48h and the model losing to
+  flat persistence at every horizon; dropping the term restored +4-5% skill at
+  6-12h with near-zero bias. Relaxation toward air is self-correcting — a second
+  unconstrained term is not. Re-run that validation before adding one back.
+  `poll.js` upserts one row into the `forecast` table
   (replace-on-write, keyed by `location_id`). The browser reads it via
   `forecastQueryUrl`/`mapForecast` (`src/data.js`) and draws a dashed line + shaded
   band. When the fit is untrustworthy it falls back to flat persistence
