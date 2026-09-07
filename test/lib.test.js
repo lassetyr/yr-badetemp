@@ -13,6 +13,7 @@ import {
   smoothAirSeries,
   SMOOTH_WINDOW_H,
   INFLATE,
+  hourBucket,
 } from "../scripts/lib.js";
 
 const OFFICIAL_WATER = [
@@ -468,4 +469,19 @@ test("smoothAirSeries averages only non-null airs; empty window → null", () =>
 
 test("smoothAirSeries on a single element returns its own air", () => {
   assert.deepEqual(smoothAirSeries([{ epoch: 5, air: 12.5 }], 24), [{ epoch: 5, air: 12.5 }]);
+});
+
+test("hourBucket floors an epoch to the top of its hour", () => {
+  assert.equal(hourBucket(1788777195), 1788775200); // 10:33:15Z -> 10:00:00Z
+  assert.equal(hourBucket(1788775200), 1788775200); // already on the hour
+});
+
+test("hourBucket collapses every poll within an hour to one key", () => {
+  // This is what throttles the archive to hourly: the bucket is the primary key,
+  // so the first poll of the hour inserts and the rest are ignore-duplicate
+  // no-ops. Without this, all ~93 daily polls would be archived.
+  const base = 1788775200;
+  const polls = [base, base + 600, base + 1800, base + 3599].map(hourBucket);
+  assert.deepEqual(polls, [base, base, base, base]);
+  assert.equal(hourBucket(base + 3600), base + 3600); // next hour is a new key
 });

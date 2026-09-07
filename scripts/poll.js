@@ -4,6 +4,7 @@ import {
   extractForecastSeries,
   buildRow,
   buildProjection,
+  hourBucket,
   HORIZON_H,
   FIT_WINDOW_DAYS,
 } from "./lib.js";
@@ -116,6 +117,43 @@ async function pollOfficial() {
   return buildRow(water, forecast, STORAGE_ID);
 }
 
+// Append one snapshot of the projection for later calibration of INFLATE against
+// real met.no forecast error (the payload's points carry the raw forecast air/wind
+// alongside our projected water, so one row records both what we predicted and the
+// weather input it came from). Keyed by the hour bucket, so only the first poll of
+// each hour lands and the rest are ignore-duplicate no-ops. Fail-soft, and only
+// failures are logged — a "archived" line on every poll would be misleading when
+// most polls are deliberate no-ops.
+async function archiveForecast(payload, generatedAt) {
+  const epochSec = Math.floor(generatedAt.getTime() / 1000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/forecast_archive`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+        // ON CONFLICT (location_id, hour_epoch) DO NOTHING.
+        Prefer: "resolution=ignore-duplicates",
+      },
+      body: JSON.stringify({
+        location_id: STORAGE_ID,
+        hour_epoch: hourBucket(epochSec),
+        generated_at: generatedAt.toISOString(),
+        payload,
+      }),
+    });
+    if (!res.ok) {
+      console.error(`Forecast archive failed: ${res.status} ${res.statusText}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`Network error archiving forecast: ${err.message}`);
+    return false;
+  }
+}
+
 // Fetch the recent reading history for the fit (oldest-first), mapped to the
 // camelCase shape the model helpers expect. Paginates so the fit sees the whole
 // FIT_WINDOW_DAYS window rather than Supabase's default 1000-row read cap.
@@ -156,7 +194,7 @@ async function fetchHistory() {
 
 // Upsert the single forecast row for this location (replace-on-write via the
 // location_id primary key). Returns true on success, false on any failure.
-async function upsertForecast(payload) {
+async function upsertForecast(payload, generatedAt) {
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/forecast`, {
       method: "POST",
@@ -169,7 +207,7 @@ async function upsertForecast(payload) {
       },
       body: JSON.stringify({
         location_id: STORAGE_ID,
-        generated_at: new Date().toISOString(),
+        generated_at: generatedAt.toISOString(),
         payload,
       }),
     });
@@ -211,10 +249,12 @@ async function updateForecast() {
       console.error("Not enough history to project; skipping projection.");
       return;
     }
+    const generatedAt = new Date();
     const payload = buildProjection(history, series, { horizonH: HORIZON_H });
-    if (await upsertForecast(payload)) {
+    if (await upsertForecast(payload, generatedAt)) {
       console.log(`Projection updated: model=${payload.model}, points=${payload.points.length}`);
     }
+    await archiveForecast(payload, generatedAt); // hourly snapshot; no-op most polls
   } catch (err) {
     console.error(`Projection build failed: ${err.message}`);
   }

@@ -15,11 +15,14 @@ frozen historical backup of the pre-Supabase era (do not append to it).
 
 There is no migration runner — the schema in `supabase/schema.sql` must be
 applied **by hand** in the Supabase SQL editor when the project is first set up
-(or ever rebuilt). It defines two tables, each with a Row Level Security
-`SELECT` policy granted to `anon` so the static chart can read them:
+(or ever rebuilt). It defines three tables, each with a Row Level Security
+`SELECT` policy granted to `anon`:
 
 - `readings` — the append-only observations.
 - `forecast` — the single-row-per-location projection the poller upserts.
+- `forecast_archive` — append-only hourly snapshots of that projection, kept for
+  calibration. The site never reads it; the `anon` policy exists so analysis
+  scripts can use the publishable key.
 
 **Easy trap:** forgetting the `forecast` table (or its `anon` policy) fails
 *silently* — the poller's upsert 404s but is fail-soft (readings keep flowing),
@@ -30,6 +33,14 @@ don't show, verify the table and policy first:
 ```sql
 select relrowsecurity from pg_class where relname = 'forecast';            -- expect: true
 select policyname, cmd, roles from pg_policies where tablename='forecast'; -- expect: "Public read access" | SELECT | {anon}
+```
+
+`forecast_archive` fails the same way but even more quietly: nothing user-facing
+breaks at all, the archive simply never fills. If it looks empty, check the table
+exists before suspecting the poller:
+
+```sql
+select count(*), max(generated_at) from forecast_archive;  -- expect: growing, ~24 rows/day
 ```
 
 ## Commands
@@ -107,7 +118,14 @@ Two halves share pure helpers but never import each other:
   6-12h with near-zero bias. Relaxation toward air is self-correcting — a second
   unconstrained term is not. Re-run that validation before adding one back.
   `poll.js` upserts one row into the `forecast` table
-  (replace-on-write, keyed by `location_id`). The browser reads it via
+  (replace-on-write, keyed by `location_id`) and appends an hourly snapshot to
+  `forecast_archive` (`archiveForecast`). The archive exists because `INFLATE`
+  cannot otherwise be calibrated: scoring a past projection needs a record of
+  what we predicted, and the single-row `forecast` table keeps none. Its key is
+  `(location_id, hour_epoch)` where `hour_epoch` is `hourBucket(generated_at)`,
+  so the first poll of each hour inserts and the rest are ignore-duplicate
+  no-ops — ~24 rows/day, no state in the poller. Nothing reads it yet; it is
+  accumulating for a calibration that needs a few weeks of data. The browser reads it via
   `forecastQueryUrl`/`mapForecast` (`src/data.js`) and draws a dashed line + shaded
   band. When the fit is untrustworthy it falls back to flat persistence
   (`model: "persistence"`).

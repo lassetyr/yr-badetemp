@@ -44,3 +44,34 @@ create policy "Public read access"
   for select
   to anon
   using (true);
+
+-- Hourly snapshots of the projection, kept for calibration. APPEND-ONLY and
+-- never read by the site. Each payload's points carry the RAW met.no forecast
+-- air/wind next to our projected water, so one row records both what we
+-- predicted and the weather input it came from -- enough to score a past
+-- projection against what actually happened, and to separate our model's error
+-- from met.no's. That is the measurement INFLATE currently cannot be tuned
+-- against (see CLAUDE.md).
+--
+-- hour_epoch is generated_at floored to the hour and is part of the primary
+-- key, so the first poll of each hour inserts and the remaining ~3 collide into
+-- ON CONFLICT DO NOTHING no-ops. That is what throttles ~93 daily polls to 24
+-- rows/day (~51 MB/year) with no state in the poller.
+create table if not exists forecast_archive (
+  location_id  text not null,
+  hour_epoch   bigint not null,       -- generated_at floored to the hour
+  generated_at timestamptz not null,  -- the actual generation time
+  payload      jsonb not null,        -- same shape as forecast.payload
+  primary key (location_id, hour_epoch)
+);
+
+-- Read access for calibration scripts via the publishable key (the site itself
+-- never queries this table). Writes use the service_role key, which bypasses RLS.
+alter table forecast_archive enable row level security;
+
+create policy "Public read access"
+  on forecast_archive
+  for select
+  to anon
+  using (true);
+

@@ -101,6 +101,14 @@ export function smoothAirSeries(series, windowH = SMOOTH_WINDOW_H) {
   });
 }
 
+// Floor an epoch (seconds) to the top of its hour. Used as the archive's
+// primary key so the first poll of each hour inserts and the rest collide into
+// ignore-duplicate no-ops — the same idempotence trick the readings PK uses,
+// which is what throttles ~93 daily polls down to one archived snapshot an hour.
+export function hourBucket(epochSec) {
+  return Math.floor(epochSec / 3600) * 3600;
+}
+
 // Least-squares fit of dWater/dt = a*(air-water) over consecutive reading pairs.
 // Only pairs with a sane time gap and both predictors present contribute.
 // Returns {a,n,ok}; ok gates the caller into the persistence fallback when the
