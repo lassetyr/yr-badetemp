@@ -38,10 +38,8 @@ select policyname, cmd, roles from pg_policies where tablename='forecast'; -- ex
 npm test                      # run all unit tests (node --test, Node 20+, zero deps)
 node --test test/lib.test.js  # run a single test file
 
-# Poller / import need Supabase credentials in the environment:
-# YR_API_KEY is optional — set it to poll the official Yr API, omit it to fall
-# back to the unofficial endpoint (temporary scaffold until the key lands).
-[YR_API_KEY=<key>] SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/poll.js
+# Poller / import need credentials in the environment:
+YR_API_KEY=<key> SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/poll.js
 SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/import-history.js  # one-off backfill from the ndjson
 
 python3 -m http.server 8000   # serve the site locally → http://localhost:8000/
@@ -65,13 +63,10 @@ Two halves share pure helpers but never import each other:
   `extractForecast` pulls instant air/wind from the met.no response, `buildRow`
   maps them to the snake_case DB row. Failures `return` rather than throw — the
   run exits 0, and a met.no blip still yields a water-only row (air/wind null).
-  When `YR_API_KEY` is unset the poller instead falls back to the pre-transition
-  unofficial GeoJSON endpoint (`www.yr.no/api/v0/watertemperatures/...`, one call
-  carrying water + air + wind) via `extractReading`/`toRow` — a temporary
-  scaffold so data keeps flowing until the key lands; it is removed at cutover.
-  For forecast fitting, `fetchHistory` paginates through the reading history so
-  the fit accesses the full `FIT_WINDOW_DAYS` window rather than Supabase's
-  default 1000-row read cap.
+  A missing `YR_API_KEY` aborts the run before any fetch — there is no fallback
+  provider. For forecast fitting, `fetchHistory` paginates through the reading
+  history so the fit accesses the full `FIT_WINDOW_DAYS` window rather than
+  Supabase's default 1000-row read cap.
 - **Browser app** (`index.html` + `app.js` → `src/data.js` + `src/config.js`):
   fetches from Supabase's PostgREST endpoint and renders with ECharts. `app.js`
   owns all I/O and DOM; `src/data.js` is pure and holds every derived/formatting
@@ -160,8 +155,8 @@ entirely in the external scheduler's configuration.
   badetemperaturer.yr.no), and `LAT`/`LON` in `scripts/poll.js`. `STORAGE_ID`
   (`"0-10238"`) is also the read-query id in `app.js`. The water + forecast
   endpoint URLs and `MET_USER_AGENT` are constants in `scripts/poll.js`.
-- Secrets: `YR_API_KEY` (official water API; **optional** — unset falls back to
-  the unofficial endpoint), plus `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
+- Secrets: `YR_API_KEY` (official water API; **required**), plus `SUPABASE_URL` /
+  `SUPABASE_SERVICE_KEY`.
 - Forecast model tunables (constants in `scripts/lib.js`): `FIT_WINDOW_DAYS`,
   `MIN_GAP_S`/`MAX_GAP_S`, `MIN_PAIRS`, `HORIZON_H`, `SMOOTH_WINDOW_H`, `INFLATE`,
   `BACKTEST_HORIZONS`/`BACKTEST_STRIDE`, `FALLBACK_ERR`.

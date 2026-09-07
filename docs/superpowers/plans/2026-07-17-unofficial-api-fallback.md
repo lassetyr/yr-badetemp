@@ -273,9 +273,12 @@ git commit -m "feat: fall back to unofficial endpoint when YR_API_KEY is unset"
 
 ---
 
-## Cutover cleanup (not part of this plan — do only after the key is verified live)
+## Cutover cleanup — **DONE 2026-09-07** (key verified live; run logged `Polling via official API`)
 
 Recorded here so it is not forgotten. When the official path is confirmed working with a real `YR_API_KEY`:
+
+(One addition the list missed: `scripts/import-history.js` also imported `toRow`. The
+mapping was inlined there instead, since the frozen ndjson archive is its only input.)
 
 1. In `scripts/poll.js`: delete `pollUnofficial()`, the `LEGACY_API_URL`/`LOCATION_ID` constants, and the `extractReading`/`toRow` names from the import; change `main()`'s row line back to `const row = await pollOfficial();` and restore the `if (!YR_API_KEY) { ... }` guard at the top.
 2. In `scripts/lib.js`: delete `extractReading` and `toRow`.

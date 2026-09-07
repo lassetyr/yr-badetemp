@@ -1,11 +1,26 @@
 import { readFile } from "node:fs/promises";
-import { toRow } from "./lib.js";
 
 const DATA_FILE = "data/dulpen.ndjson";
 const LOCATION_ID = "0-10238";
 const BATCH_SIZE = 500;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+// Map one frozen-ndjson reading (legacy camelCase shape) to a readings row.
+// Lives here rather than in lib.js because the archive is this script's only
+// input — the poller has spoken the official shape since the API cutover.
+function toRow(reading, locationId) {
+  return {
+    location_id: locationId,
+    epoch: reading.epoch,
+    time: reading.time,
+    water: reading.water,
+    air: reading.air,
+    wind_speed: reading.windSpeed,
+    wind_gust: reading.windGust,
+    wind_dir: reading.windDir,
+  };
+}
 
 async function main() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {

@@ -14,26 +14,6 @@ export const BACKTEST_STRIDE = 6;    // subsample origins ~every 2h at 20-min ca
 export const FALLBACK_ERR = 0.5;     // band half-width (°C) when backtest has no data
 export const SMOOTH_WINDOW_H = 24;   // trailing-mean window for the air driver
 
-// Find the feature with `locationId` and return a canonical reading,
-// or null if absent or missing a numeric water temperature.
-export function extractReading(geojson, locationId) {
-  const features = geojson?.features;
-  if (!Array.isArray(features)) return null;
-  const feature = features.find((f) => f?.properties?.locationId === locationId);
-  if (!feature) return null;
-  const p = feature.properties;
-  if (typeof p.waterTemperature !== "number") return null;
-  return {
-    time: p.timestamp,
-    epoch: p.timestampEpoch,
-    water: p.waterTemperature,
-    air: num(p.airTemperature),
-    windSpeed: num(p.windSpeed),
-    windGust: num(p.windGust),
-    windDir: num(p.windDirection),
-  };
-}
-
 // Find the newest official water reading in the array and return a canonical
 // shape, or null if empty/malformed. The official API returns up to 5 entries
 // of { temperature, time }, newest-first, but we pick by time rather than trust
@@ -77,20 +57,6 @@ export function buildRow(water, forecast, locationId) {
     wind_speed: forecast?.windSpeed ?? null,
     wind_gust: forecast?.windGust ?? null,
     wind_dir: forecast?.windDir ?? null,
-  };
-}
-
-// Map a reading to the snake_case row payload for the readings table.
-export function toRow(reading, locationId) {
-  return {
-    location_id: locationId,
-    epoch: reading.epoch,
-    time: reading.time,
-    water: reading.water,
-    air: reading.air,
-    wind_speed: reading.windSpeed,
-    wind_gust: reading.windGust,
-    wind_dir: reading.windDir,
   };
 }
 
