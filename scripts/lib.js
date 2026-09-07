@@ -14,22 +14,28 @@ export const BACKTEST_STRIDE = 6;    // subsample origins ~every 2h at 20-min ca
 export const FALLBACK_ERR = 0.5;     // band half-width (°C) when backtest has no data
 export const SMOOTH_WINDOW_H = 24;   // trailing-mean window for the air driver
 
-// Find the newest official water reading in the array and return a canonical
-// shape, or null if empty/malformed. The official API returns up to 5 entries
-// of { temperature, time }, newest-first, but we pick by time rather than trust
-// the order.
-export function extractOfficialWater(json) {
-  if (!Array.isArray(json)) return null;
-  let best = null;
+// Canonicalise every official water reading in the response, oldest-first.
+// The endpoint serves the five most recent registrations for the location
+// (documented, and confirmed against the saved help article), so keeping only
+// the newest threw away most of what each poll already fetched: the sensor
+// reports roughly every 10 minutes while the poll runs less often, which cost
+// ~40% of the sensor's data. Inserting all of them backfills those gaps and
+// makes the poll interval independent of completeness, up to the ~50 minutes
+// five readings span. Entries with a non-numeric temperature or unparseable
+// time are skipped; duplicate timestamps collapse. Returns [] when there is
+// nothing usable.
+export function extractOfficialWaters(json) {
+  if (!Array.isArray(json)) return [];
+  const byEpoch = new Map();
   for (const entry of json) {
     if (typeof entry?.temperature !== "number") continue;
     const epoch = Math.floor(Date.parse(entry.time) / 1000);
     if (!Number.isFinite(epoch)) continue;
-    if (!best || epoch > best.epoch) {
-      best = { temperature: entry.temperature, time: entry.time, epoch };
+    if (!byEpoch.has(epoch)) {
+      byEpoch.set(epoch, { temperature: entry.temperature, time: entry.time, epoch });
     }
   }
-  return best;
+  return [...byEpoch.values()].sort((a, b) => a.epoch - b.epoch);
 }
 
 // Pull instant air/wind from a met.no Locationforecast 2.0 response. Returns an

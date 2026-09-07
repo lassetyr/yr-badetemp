@@ -69,13 +69,26 @@ Two halves share pure helpers but never import each other:
 - **Poller** (`scripts/poll.js` → `scripts/lib.js`): runs in CI/Node. `poll.js`
   does all I/O — water temperature from the official `badetemperaturer.yr.no`
   API (`apikey` header), air/wind from MET Norway Locationforecast 2.0
-  (`User-Agent` header), then POSTs one water-anchored row to Supabase. `lib.js`
-  is pure: `extractOfficialWater` picks the newest official water reading,
+  (`User-Agent` header), then POSTs the water-anchored rows to Supabase. `lib.js`
+  is pure: `extractOfficialWaters` canonicalises every returned water reading,
   `extractForecast` pulls instant air/wind from the met.no response, `buildRow`
   maps them to the snake_case DB row. Failures `return` rather than throw — the
   run exits 0, and a met.no blip still yields a water-only row (air/wind null).
   A missing `YR_API_KEY` aborts the run before any fetch — there is no fallback
-  provider. For forecast fitting, `fetchHistory` paginates through the reading
+  provider.
+
+  **Each poll inserts five readings, not one.** The official endpoint serves the
+  five most recent registrations for the location, and the sensor reports about
+  every 10 minutes — so a poll that kept only the newest was discarding ~40% of
+  the sensor's data (measured 2026-09-07: 593 rows stored, ~390 missed in a
+  week). `pollOfficial` now maps all of them through `buildRow` and posts the
+  array; the `(location_id, epoch)` PK turns the four the previous poll already
+  stored into no-ops, so overlap is free. This decouples poll cadence from
+  completeness: **any interval up to ~40 min is lossless** (five readings span
+  ≈50 min), so polling less often now stores more data than polling often did.
+  Every row from one poll carries that poll's met.no air/wind — met.no's instant
+  values are hourly-granular so the feed always carried this approximation, and
+  nulls would break the chart's air/wind lines, which split at null. For forecast fitting, `fetchHistory` paginates through the reading
   history so the fit accesses the full `FIT_WINDOW_DAYS` window rather than
   Supabase's default 1000-row read cap.
 - **Browser app** (`index.html` + `app.js` → `src/data.js` + `src/config.js`):
@@ -198,7 +211,10 @@ entirely in the external scheduler's configuration.
 - Browser refresh cadence: `REFRESH_MS` in `app.js` (auto-refetches without page
   reload; pauses while the tab is hidden).
 - Poll cadence: configured in the external scheduler (cron-job.org) that hits
-  `workflow_dispatch`; the workflow itself has no `schedule:` cron.
+  `workflow_dispatch`; the workflow itself has no `schedule:` cron. Since each
+  poll inserts the five most recent readings, anything up to ~40 min is lossless
+  — the interval controls how fresh the page looks, not how complete the data is.
+  Beyond ~90 min (`MAX_GAP_S`) consecutive pairs stop counting toward the fit.
 
 ## Design docs
 

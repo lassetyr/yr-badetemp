@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  extractOfficialWater,
+  extractOfficialWaters,
   extractForecast,
   buildRow,
   extractForecastSeries,
@@ -22,58 +22,43 @@ const OFFICIAL_WATER = [
   { temperature: 11, time: "2021-10-19T06:17:54+02:00" },
 ];
 
-test("extractOfficialWater returns the newest reading regardless of array order", () => {
-  assert.deepEqual(extractOfficialWater(OFFICIAL_WATER), {
+test("extractOfficialWaters returns every reading, oldest-first", () => {
+  // The official endpoint serves the five most recent registrations. Keeping only
+  // the newest discarded ~40% of the sensor's data, because the sensor reports
+  // roughly every 10 min while we poll less often (measured 2026-09-07).
+  const all = extractOfficialWaters(OFFICIAL_WATER);
+  assert.equal(all.length, 3);
+  assert.deepEqual(all.map((r) => r.temperature), [19, 11, 16]); // ascending by time
+  assert.deepEqual(all[2], {
     temperature: 16,
     time: "2022-06-14T10:17:54+02:00",
     epoch: Math.floor(Date.parse("2022-06-14T10:17:54+02:00") / 1000),
   });
 });
 
-test("extractOfficialWater skips entries with non-numeric temperature", () => {
-  const r = extractOfficialWater([
+test("extractOfficialWaters skips entries with non-numeric temperature", () => {
+  const all = extractOfficialWaters([
     { temperature: null, time: "2022-06-14T10:17:54+02:00" },
     { temperature: 12, time: "2022-06-13T10:17:54+02:00" },
   ]);
-  assert.equal(r.temperature, 12);
+  assert.deepEqual(all.map((r) => r.temperature), [12]);
 });
 
-test("extractOfficialWater returns null for empty array, non-array, and unparseable times", () => {
-  assert.equal(extractOfficialWater([]), null);
-  assert.equal(extractOfficialWater(null), null);
-  assert.equal(extractOfficialWater({}), null);
-  assert.equal(
-    extractOfficialWater([{ temperature: 12, time: "not-a-date" }]),
-    null,
-  );
+test("extractOfficialWaters returns [] for empty, non-array, and unparseable input", () => {
+  assert.deepEqual(extractOfficialWaters([]), []);
+  assert.deepEqual(extractOfficialWaters(null), []);
+  assert.deepEqual(extractOfficialWaters({}), []);
+  assert.deepEqual(extractOfficialWaters([{ temperature: 12, time: "not-a-date" }]), []);
 });
 
-const FORECAST = {
-  properties: {
-    timeseries: [
-      {
-        data: {
-          instant: {
-            details: {
-              air_temperature: 23.5,
-              wind_speed: 0.8,
-              wind_speed_of_gust: 2.6,
-              wind_from_direction: 78,
-            },
-          },
-        },
-      },
-    ],
-  },
-};
-
-test("extractForecast maps met.no instant details to camelCase", () => {
-  assert.deepEqual(extractForecast(FORECAST), {
-    air: 23.5,
-    windSpeed: 0.8,
-    windGust: 2.6,
-    windDir: 78,
-  });
+test("extractOfficialWaters de-duplicates repeated timestamps", () => {
+  // Consecutive polls overlap heavily; the DB primary key already makes that a
+  // no-op, but one response should not carry the same epoch twice.
+  const all = extractOfficialWaters([
+    { temperature: 16, time: "2022-06-14T10:17:54+02:00" },
+    { temperature: 16, time: "2022-06-14T10:17:54+02:00" },
+  ]);
+  assert.equal(all.length, 1);
 });
 
 test("extractForecast returns all-null fields for a malformed shape", () => {

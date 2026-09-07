@@ -1,5 +1,5 @@
 import {
-  extractOfficialWater,
+  extractOfficialWaters,
   extractForecast,
   extractForecastSeries,
   buildRow,
@@ -28,28 +28,29 @@ const YR_API_KEY = process.env.YR_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-// Fetch the latest official water reading. Returns a canonical reading or null
-// (network/HTTP/parse failure) — water is the anchor, so null means "no row".
-async function fetchWater() {
+// Fetch the official water readings (the endpoint serves the five most recent).
+// Returns them oldest-first, or [] on network/HTTP/parse failure — water is the
+// anchor, so an empty list means "no rows this poll".
+async function fetchWaters() {
   let res;
   try {
     res = await fetch(WATER_API_URL, { headers: { apikey: YR_API_KEY } });
   } catch (err) {
     console.error(`Network error fetching water API: ${err.message}`);
-    return null;
+    return [];
   }
   if (!res.ok) {
     console.error(`Water API request failed: ${res.status} ${res.statusText}`);
-    return null;
+    return [];
   }
   let json;
   try {
     json = await res.json();
   } catch (err) {
     console.error(`Malformed water API response: ${err.message}`);
-    return null;
+    return [];
   }
-  return extractOfficialWater(json);
+  return extractOfficialWaters(json);
 }
 
 // Fetch air/wind from met.no. Returns a forecast object or null; a null here is
@@ -76,9 +77,11 @@ async function fetchForecast() {
   return extractForecast(json);
 }
 
-// Insert one row into Supabase. Returns true on success, false on any failure.
-// All failures are soft — the run exits 0 and the next scheduled poll retries.
-async function insertRow(row) {
+// Insert readings into Supabase. Returns the rows actually written (PostgREST
+// echoes only those, so re-sent overlap from the previous poll doesn't inflate
+// the count) or null on failure. All failures are soft — the run exits 0 and
+// the next scheduled poll retries.
+async function insertRows(rows) {
   let insert;
   try {
     insert = await fetch(`${SUPABASE_URL}/rest/v1/readings`, {
@@ -87,34 +90,46 @@ async function insertRow(row) {
         "Content-Type": "application/json",
         apikey: SUPABASE_SERVICE_KEY,
         Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-        // ON CONFLICT DO NOTHING against the (location_id, epoch) primary key,
-        // so re-runs and overlapping schedules are idempotent.
-        Prefer: "resolution=ignore-duplicates",
+        // ON CONFLICT DO NOTHING against the (location_id, epoch) primary key.
+        // Every poll re-sends up to four readings it already stored, so this is
+        // the mechanism that makes overlapping polls free rather than an error.
+        Prefer: "resolution=ignore-duplicates,return=representation",
       },
-      body: JSON.stringify(row),
+      body: JSON.stringify(rows),
     });
   } catch (err) {
-    console.error(`Network error inserting reading: ${err.message}`);
-    return false;
+    console.error(`Network error inserting readings: ${err.message}`);
+    return null;
   }
   if (!insert.ok) {
     console.error(`Insert failed: ${insert.status} ${insert.statusText}`);
-    return false;
+    return null;
   }
-  return true;
+  try {
+    return await insert.json();
+  } catch {
+    return []; // written, but the echo was unreadable — don't fail the poll
+  }
 }
 
-// Official path: Yr water (anchor) + met.no weather (optional). Returns a
-// ready-to-insert row, or null when there is no water reading this poll.
+// Official path: Yr water (anchor) + met.no weather (optional). Returns the
+// ready-to-insert rows, oldest-first, or [] when this poll has no water reading.
+//
+// Every returned reading gets THIS poll's met.no air/wind. met.no's instant
+// values are hourly-granular, so consecutive polls within an hour already share
+// one value — stamping the five readings (≈50 min) alike is the same
+// approximation the feed has always carried, and the 24h smoothing that drives
+// the fit makes the offset irrelevant. Leaving air null on the backfilled rows
+// would instead break the chart's air and wind lines, which split at nulls.
 async function pollOfficial() {
   console.log("Polling via official API");
-  const water = await fetchWater();
-  if (!water) {
+  const waters = await fetchWaters();
+  if (waters.length === 0) {
     console.error("No water temperature available; skipping insert.");
-    return null; // water-anchored: no water, no row
+    return []; // water-anchored: no water, no rows
   }
-  const forecast = await fetchForecast(); // null → water-only row
-  return buildRow(water, forecast, STORAGE_ID);
+  const forecast = await fetchForecast(); // null → water-only rows
+  return waters.map((w) => buildRow(w, forecast, STORAGE_ID));
 }
 
 // Append one snapshot of the projection for later calibration of INFLATE against
@@ -269,10 +284,16 @@ async function main() {
     console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.");
     return;
   }
-  const row = await pollOfficial();
-  if (row) {
-    const ok = await insertRow(row);
-    if (ok) console.log(`Inserted reading: water=${row.water}C at ${row.time}`);
+  const rows = await pollOfficial();
+  if (rows.length > 0) {
+    const written = await insertRows(rows);
+    if (written) {
+      const newest = rows[rows.length - 1];
+      console.log(
+        `Fetched ${rows.length} reading(s), inserted ${written.length} new; ` +
+          `latest water=${newest.water}C at ${newest.time}`,
+      );
+    }
   }
   await updateForecast(); // fail-soft projection refresh; never blocks the insert
 }
