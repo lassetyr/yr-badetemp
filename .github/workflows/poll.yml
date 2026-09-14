@@ -14,12 +14,18 @@ concurrency:
 jobs:
   poll:
     runs-on: ubuntu-latest
+    # Hard cap so a hung run can never outlive its 20-minute slot and block the
+    # next dispatch (a stuck run holds the `poll` concurrency group and collapses
+    # every queued trigger into one, so a 6-hour default hang silently drops
+    # ~18 readings). A healthy poll finishes in well under a minute.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
       - name: Fetch and insert reading
+        timeout-minutes: 4
         env:
           YR_API_KEY: ${{ secrets.YR_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

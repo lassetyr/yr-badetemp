@@ -28,13 +28,25 @@ const YR_API_KEY = process.env.YR_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
+// --- Network ----------------------------------------------------------------
+// Every call below is fail-soft, but a stalled connection (socket open, server
+// never responds) never rejects — a bare fetch would await forever and hang the
+// whole poll past its slot. Abort each request after FETCH_TIMEOUT_MS so the
+// stall surfaces as an ordinary rejection the existing catch blocks handle
+// (→ []/null/false), and the next poll retries. Well under the workflow's
+// per-step cap; these APIs answer in well under a second when healthy.
+const FETCH_TIMEOUT_MS = 15_000;
+function fetchWithTimeout(url, options = {}) {
+  return fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+}
+
 // Fetch the official water readings (the endpoint serves the five most recent).
 // Returns them oldest-first, or [] on network/HTTP/parse failure — water is the
 // anchor, so an empty list means "no rows this poll".
 async function fetchWaters() {
   let res;
   try {
-    res = await fetch(WATER_API_URL, { headers: { apikey: YR_API_KEY } });
+    res = await fetchWithTimeout(WATER_API_URL, { headers: { apikey: YR_API_KEY } });
   } catch (err) {
     console.error(`Network error fetching water API: ${err.message}`);
     return [];
@@ -58,7 +70,7 @@ async function fetchWaters() {
 async function fetchForecast() {
   let res;
   try {
-    res = await fetch(FORECAST_API_URL, { headers: { "User-Agent": MET_USER_AGENT } });
+    res = await fetchWithTimeout(FORECAST_API_URL, { headers: { "User-Agent": MET_USER_AGENT } });
   } catch (err) {
     console.error(`Network error fetching forecast API: ${err.message}`);
     return null;
@@ -84,7 +96,7 @@ async function fetchForecast() {
 async function insertRows(rows) {
   let insert;
   try {
-    insert = await fetch(`${SUPABASE_URL}/rest/v1/readings`, {
+    insert = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/readings`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -142,7 +154,7 @@ async function pollOfficial() {
 async function archiveForecast(payload, generatedAt) {
   const epochSec = Math.floor(generatedAt.getTime() / 1000);
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/forecast_archive`, {
+    const res = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/forecast_archive`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -185,7 +197,7 @@ async function fetchHistory() {
         `?select=epoch,water,air,wind_speed,wind_dir&location_id=eq.${STORAGE_ID}` +
         `&epoch=gte.${cutoff}&order=epoch.desc&limit=${PAGE}&offset=${page * PAGE}`;
       // Newest-first so a partial fetch keeps the most recent rows; reversed below.
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
       });
       if (!res.ok) {
@@ -211,7 +223,7 @@ async function fetchHistory() {
 // location_id primary key). Returns true on success, false on any failure.
 async function upsertForecast(payload, generatedAt) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/forecast`, {
+    const res = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/forecast`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -243,7 +255,7 @@ async function upsertForecast(payload, generatedAt) {
 async function updateForecast() {
   let json;
   try {
-    const res = await fetch(FORECAST_API_URL, { headers: { "User-Agent": MET_USER_AGENT } });
+    const res = await fetchWithTimeout(FORECAST_API_URL, { headers: { "User-Agent": MET_USER_AGENT } });
     if (!res.ok) {
       console.error(`Forecast series request failed: ${res.status} ${res.statusText}`);
       return;
