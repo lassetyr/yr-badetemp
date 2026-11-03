@@ -51,6 +51,7 @@ node --test test/lib.test.js  # run a single test file
 
 # Poller / import need credentials in the environment:
 YR_API_KEY=<key> SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/poll.js
+cd worker && npx wrangler deploy --dry-run    # bundle-check the Cloudflare Worker (see worker/README.md)
 SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/import-history.js  # one-off backfill from the ndjson
 
 python3 -m http.server 8000   # serve the site locally → http://localhost:8000/
@@ -66,8 +67,13 @@ read-only via RLS and is meant to ship in client code).
 
 Two halves share pure helpers but never import each other:
 
-- **Poller** (`scripts/poll.js` → `scripts/lib.js`): runs in CI/Node. `poll.js`
-  does all I/O — water temperature from the official `badetemperaturer.yr.no`
+- **Poller** (`scripts/poller.js` → `scripts/lib.js`): `poller.js` exports
+  `runPoll(config)` and has two thin entry points that pass it secrets —
+  `scripts/poll.js` (Node, GitHub Actions; reads `process.env`) and
+  `worker/index.js` (draft Cloudflare Worker on a Cron Trigger; reads `env`, see
+  `worker/README.md`). `poller.js` must stay free of Node-only APIs (no
+  `process`, no `node:` imports, no `Date.now()` at module scope — workerd
+  returns 0 there) so it runs unchanged in both. It does all I/O — water temperature from the official `badetemperaturer.yr.no`
   API (`apikey` header), air/wind from MET Norway Locationforecast 2.0
   (`User-Agent` header), then POSTs the water-anchored rows to Supabase. `lib.js`
   is pure: `extractOfficialWaters` canonicalises every returned water reading,
@@ -111,7 +117,7 @@ Two halves share pure helpers but never import each other:
   transient error leaves the existing header/chart intact rather than blanking
   it.
 
-- **Forecast** (`scripts/poll.js:updateForecast` → `scripts/lib.js`): each poll
+- **Forecast** (`scripts/poller.js:updateForecast` → `scripts/lib.js`): each poll
   also builds a best-effort 48h water-temperature projection. `lib.js` fits a
   single-parameter relaxation model `dWater/dt = a·(air−water)`
   against a 24-hour trailing-mean air driver (`smoothAirSeries`, `SMOOTH_WINDOW_H`)
@@ -130,7 +136,11 @@ Two halves share pure helpers but never import each other:
   flat persistence at every horizon; dropping the term restored +4-5% skill at
   6-12h with near-zero bias. Relaxation toward air is self-correcting — a second
   unconstrained term is not. Re-run that validation before adding one back.
-  `poll.js` upserts one row into the `forecast` table
+  **CPU budget:** the Worker's Free plan allows 10 ms CPU per cron run, and the
+  projection is the only heavy step. `backtestError` uses binary search over the
+  (sorted) history for that reason — a linear scan made it quadratic (~60 ms on a
+  30-day window, ~6 ms now). Keep new model work roughly linear in history size.
+  `poller.js` upserts one row into the `forecast` table
   (replace-on-write, keyed by `location_id`) and appends an hourly snapshot to
   `forecast_archive` (`archiveForecast`). The archive exists because `INFLATE`
   cannot otherwise be calibrated: scoring a past projection needs a record of
@@ -154,7 +164,7 @@ Two halves share pure helpers but never import each other:
 
 `lib.js` and `src/data.js` are deliberately I/O-free so the tests can exercise
 logic without network or DOM. When adding logic, put the pure part in those
-files and keep side effects in `poll.js` / `app.js`.
+files and keep side effects in `poller.js` / `app.js`.
 
 ### Append-only data invariant
 
@@ -176,6 +186,10 @@ single row per location, replaced each poll via `Prefer: resolution=merge-duplic
 
 ### Scheduling reality
 
+(A draft alternative lives in `worker/`: a Cloudflare Worker whose Cron Trigger
+runs the same `runPoll`, which would retire cron-job.org and its PAT. Until it is
+deployed and switched over, the paragraph below is how polling actually runs.)
+
 The poll workflow has **no `schedule:` cron** — it is triggered solely by an
 external scheduler (e.g. cron-job.org) hitting the `workflow_dispatch` REST
 endpoint, which `scripts/trigger.sh` documents and performs. GitHub's own
@@ -195,14 +209,14 @@ entirely in the external scheduler's configuration.
 - `STORAGE_ID` is currently only `"0-10238"` (Dulpen) — the id written to the
   `location_id` column. That column exists as the seam for adding more spots
   later, but only Dulpen is written. (`QUERY_ID`, sent to the Yr API, is
-  tracked separately in `scripts/poll.js`.)
+  tracked separately in `scripts/poller.js`.)
 
 ## Config knobs
 
 - Tracked spot: `STORAGE_ID` (written to `location_id`), `QUERY_ID` (sent to
-  badetemperaturer.yr.no), and `LAT`/`LON` in `scripts/poll.js`. `STORAGE_ID`
+  badetemperaturer.yr.no), and `LAT`/`LON` in `scripts/poller.js`. `STORAGE_ID`
   (`"0-10238"`) is also the read-query id in `app.js`. The water + forecast
-  endpoint URLs and `MET_USER_AGENT` are constants in `scripts/poll.js`.
+  endpoint URLs and `MET_USER_AGENT` are constants in `scripts/poller.js`.
 - Secrets: `YR_API_KEY` (official water API; **required**), plus `SUPABASE_URL` /
   `SUPABASE_SERVICE_KEY`.
 - Forecast model tunables (constants in `scripts/lib.js`): `FIT_WINDOW_DAYS`,

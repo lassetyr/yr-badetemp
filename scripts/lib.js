@@ -178,16 +178,59 @@ export function rollForward(seed, forecastSeries, coeffs, opts = {}) {
   return out;
 }
 
-// Nearest entry to `t` (seconds) within `tolS`, by |epoch - t|. Linear scan —
-// arrays here are at most a few thousand rows, called from a background poll.
-function nearestByEpoch(arr, t, tolS) {
+// True when `arr` is epoch-ascending (ties allowed). One O(n) pass, so callers
+// can pick the binary-search path without assuming their input is sorted.
+function isEpochSorted(arr) {
+  for (let i = 1; i < arr.length; i++) if (arr[i].epoch < arr[i - 1].epoch) return false;
+  return true;
+}
+
+// Index of the first entry with epoch >= t (lowerBound) or epoch > t
+// (upperBound) in an epoch-ascending array; arr.length when there is none.
+function bound(arr, t, strict) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (strict ? arr[mid].epoch <= t : arr[mid].epoch < t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+const lowerBound = (arr, t) => bound(arr, t, false);
+const upperBound = (arr, t) => bound(arr, t, true);
+
+// Nearest entry to `t` (seconds) within `tolS`, by |epoch - t|; on a tie the
+// earliest entry wins. `sorted` selects a binary search over an epoch-ascending
+// array. The linear scan is kept for unsorted input, and both paths return the
+// same entry: the scan keeps the first strict minimum, and the binary search
+// resolves to the first entry of the nearest epoch, preferring the earlier side.
+//
+// The binary search is what keeps the poll inside Cloudflare Workers' free-tier
+// CPU budget: backtestError calls this ~3000 times against a ~4300-row 30-day
+// history, and a linear scan made the whole projection quadratic (~60 ms).
+function nearestByEpoch(arr, t, tolS, sorted = false) {
   let best = null;
   let bestGap = Infinity;
-  for (const e of arr) {
-    const gap = Math.abs(e.epoch - t);
-    if (gap < bestGap) {
-      bestGap = gap;
-      best = e;
+  if (sorted) {
+    const i = lowerBound(arr, t); // arr[i] is the first entry at/after t
+    if (i > 0) {
+      // First entry of the run sharing arr[i-1]'s epoch (the scan's pick).
+      const j = lowerBound(arr, arr[i - 1].epoch);
+      best = arr[j];
+      bestGap = t - arr[j].epoch;
+    }
+    if (i < arr.length && arr[i].epoch - t < bestGap) {
+      best = arr[i];
+      bestGap = arr[i].epoch - t;
+    }
+  } else {
+    for (const e of arr) {
+      const gap = Math.abs(e.epoch - t);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = e;
+      }
     }
   }
   return best && bestGap <= tolS ? best : null;
@@ -209,20 +252,26 @@ export function backtestError(readings, coeffs, horizonsH = BACKTEST_HORIZONS, o
     sum[h] = 0;
     count[h] = 0;
   }
+  const sorted = isEpochSorted(readings);
   for (let i = 0; i < readings.length; i += stride) {
     const origin = readings[i];
     if (origin.water == null) continue;
+    // rollForward stops at the first entry past the horizon, so on sorted input
+    // only the slice up to it matters; copying the whole tail per origin is what
+    // made this loop quadratic.
+    const cutoff = origin.epoch + maxH * 3600;
+    const end = sorted ? Math.max(i + 1, upperBound(readings, cutoff)) : readings.length;
     const proj = rollForward(
       { epoch: origin.epoch, water: origin.water },
-      readings.slice(i + 1),
+      readings.slice(i + 1, end),
       coeffs,
       { horizonH: maxH },
     );
     if (proj.length === 0) continue;
     for (const h of horizonsH) {
       const targetT = origin.epoch + h * 3600;
-      const pred = nearestByEpoch(proj, targetT, tolS);
-      const actual = nearestByEpoch(readings, targetT, tolS);
+      const pred = nearestByEpoch(proj, targetT, tolS, true); // rollForward output is strictly ascending
+      const actual = nearestByEpoch(readings, targetT, tolS, sorted);
       if (pred == null || actual == null || actual.water == null) continue;
       sum[h] += Math.abs(pred.water - actual.water);
       count[h] += 1;
