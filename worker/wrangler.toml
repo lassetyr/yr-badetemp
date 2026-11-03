@@ -1,0 +1,21 @@
+# Cloudflare Worker that polls on a Cron Trigger. See worker/README.md.
+# Kept in worker/ rather than the repo root so Cloudflare Pages, which builds the
+# site from the root, never picks this file up as its own configuration.
+name = "yr-badetemp-poll"
+main = "index.js"
+compatibility_date = "2026-09-01"
+
+# Not reachable over HTTP: the Worker has no fetch handler and no public route.
+workers_dev = false
+preview_urls = false
+
+[triggers]
+# UTC, every 20 minutes. Each poll stores the five most recent readings (~50 min
+# of sensor data), so any interval up to ~40 min is lossless; this only sets how
+# fresh the page looks. Free plan: max 5 cron triggers per account.
+crons = ["*/20 * * * *"]
+
+# Workers Logs: keeps console output and per-invocation CPU time in the dashboard,
+# which is how to check the poll stays inside the Free plan's 10 ms CPU limit.
+[observability]
+enabled = true
