@@ -53,6 +53,10 @@ node --test test/lib.test.js  # run a single test file
 YR_API_KEY=<key> SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/poll.js
 SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/import-history.js  # one-off backfill from the ndjson
 
+# Forecast analysis (read-only, uses the publishable key, no secrets):
+node scripts/analysis/score-archive.mjs   # score archived projections vs what the sensor measured
+node scripts/analysis/replay-archive.mjs  # replay model variants on archived met.no inputs + a walk-forward
+
 python3 -m http.server 8000   # serve the site locally → http://localhost:8000/
 GITHUB_TOKEN=<pat> ./scripts/trigger.sh   # manually fire the poll workflow (expect HTTP 204)
 ```
