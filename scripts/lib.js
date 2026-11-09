@@ -206,9 +206,9 @@ const upperBound = (arr, t) => bound(arr, t, true);
 // same entry: the scan keeps the first strict minimum, and the binary search
 // resolves to the first entry of the nearest epoch, preferring the earlier side.
 //
-// The binary search is what keeps the poll inside Cloudflare Workers' free-tier
-// CPU budget: backtestError calls this ~3000 times against a ~4300-row 30-day
-// history, and a linear scan made the whole projection quadratic (~60 ms).
+// The binary search keeps the projection near-linear: backtestError calls this
+// ~3000 times against a ~4300-row 30-day history, and a linear scan made the
+// whole projection quadratic (~60 ms per poll instead of ~6 ms).
 function nearestByEpoch(arr, t, tolS, sorted = false) {
   let best = null;
   let bestGap = Infinity;

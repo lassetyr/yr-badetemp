@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runPoll } from "../scripts/poller.js";
-import worker from "../worker/index.js";
 
 const CFG = { yrApiKey: "yr-key", supabaseUrl: "https://db.example", supabaseServiceKey: "sb_secret_x" };
 const silent = { log() {}, error() {} };
@@ -86,29 +85,4 @@ test("runPoll still inserts water-only rows when met.no is down", async () => {
   assert.ok(insert.body.every((r) => r.air === null));
   assert.equal(summary.projection, null); // no forecast series → no projection
   assert.ok(!f.calls.some((c) => c.url.endsWith("/rest/v1/forecast")));
-});
-
-test("worker scheduled handler passes its env secrets to the poll", async () => {
-  const f = fakeFetch();
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = f.fn; // the Worker uses the runtime's global fetch
-  const realLog = console.log;
-  const realError = console.error;
-  console.log = console.error = () => {};
-  try {
-    await worker.scheduled({ cron: "*/20 * * * *" }, {
-      YR_API_KEY: "yr-key",
-      SUPABASE_URL: "https://db.example",
-      SUPABASE_SERVICE_KEY: "sb_secret_x",
-    });
-  } finally {
-    globalThis.fetch = realFetch;
-    console.log = realLog;
-    console.error = realError;
-  }
-  assert.equal(f.calls.find((c) => c.url.includes("badetemperaturer")).headers.apikey, "yr-key");
-  assert.equal(
-    f.calls.find((c) => c.url === "https://db.example/rest/v1/readings").headers.apikey,
-    "sb_secret_x",
-  );
 });

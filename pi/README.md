@@ -1,8 +1,8 @@
 # Polling from a Raspberry Pi
 
-Runs the poll (`scripts/poll.js`, the same code GitHub Actions and the Cloudflare
-Worker run) every 20 minutes on a Raspberry Pi with a systemd timer. No CPU
-limit, no Actions minutes, no external scheduler or PAT.
+Runs the poll (`scripts/poll.js`, the same code GitHub Actions runs) every 20
+minutes on a Raspberry Pi with a systemd timer. No CPU limit, no Actions
+minutes, no external scheduler or PAT.
 
 Tested target: Raspberry Pi 4B on Raspberry Pi OS. Raspberry Pi OS's own
 `nodejs` package (Node 18) is enough; the test suite passes on 18.
@@ -76,9 +76,8 @@ After changing the unit files in this folder, copy them again and run
 
 Once the Pi has run cleanly for a day or two:
 
-1. Remove the Cloudflare Worker: `cd worker && npx wrangler delete`.
-2. Disable the cron-job.org job and revoke its GitHub PAT.
-3. Keep `.github/workflows/poll.yml` as a manual "Run workflow" fallback, or delete it.
+1. Disable the cron-job.org job and revoke its GitHub PAT.
+2. Keep `.github/workflows/poll.yml` as a manual "Run workflow" fallback, or delete it.
 
 Running more than one poller at once is harmless (every write is idempotent),
 so there is no need to switch everything over at the same moment.

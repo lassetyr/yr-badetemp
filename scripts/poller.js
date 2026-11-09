@@ -1,9 +1,8 @@
 // The poll itself: fetch water + weather, insert readings, refresh the forecast.
-// Shared by both entry points — scripts/poll.js (Node, GitHub Actions) and
-// worker/index.js (Cloudflare Workers Cron Trigger) — so there is exactly one
-// implementation to keep correct. It never touches process.env or any other
-// Node-only API: secrets and the fetch implementation arrive in `config`, which
-// is what lets the same file run unchanged in the Workers runtime.
+// scripts/poll.js is the entry point (GitHub Actions, the Raspberry Pi timer in
+// pi/, or by hand); it reads the secrets from the environment and calls runPoll.
+// Secrets and the fetch implementation arrive in `config` rather than being read
+// here, which is what lets the tests run a whole poll against a fake fetch.
 //
 // All I/O lives here; the pure logic stays in lib.js.
 import {
@@ -305,8 +304,7 @@ export async function runPoll(config) {
     yrApiKey: config.yrApiKey,
     supabaseUrl: config.supabaseUrl,
     supabaseServiceKey: config.supabaseServiceKey,
-    // Wrapped rather than referenced: the Workers runtime throws "Illegal
-    // invocation" when its fetch is called detached from globalThis.
+    // Looked up at call time, so a fetch swapped in on globalThis is honoured.
     fetch: config.fetch ?? ((...args) => fetch(...args)),
     log: config.log ?? console,
   };
@@ -334,7 +332,7 @@ export async function runPoll(config) {
     }
   }
   // Readings are written before the projection starts, so if the projection is
-  // ever cut short (a crash, or a CPU limit in the Workers runtime) the water
+  // ever cut short (a crash, or the step timeout killing a hung run) the water
   // data is already safe and only the forecast refresh is lost.
   summary.projection = (await updateForecast(cfg)) ?? null; // fail-soft; never blocks the insert
   return summary;

@@ -51,7 +51,6 @@ node --test test/lib.test.js  # run a single test file
 
 # Poller / import need credentials in the environment:
 YR_API_KEY=<key> SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/poll.js
-cd worker && npx wrangler deploy --dry-run    # bundle-check the Cloudflare Worker (see worker/README.md)
 SUPABASE_URL=<url> SUPABASE_SERVICE_KEY=<sb_secret_...> node scripts/import-history.js  # one-off backfill from the ndjson
 
 python3 -m http.server 8000   # serve the site locally → http://localhost:8000/
@@ -68,12 +67,10 @@ read-only via RLS and is meant to ship in client code).
 Two halves share pure helpers but never import each other:
 
 - **Poller** (`scripts/poller.js` → `scripts/lib.js`): `poller.js` exports
-  `runPoll(config)` and has two thin entry points that pass it secrets —
-  `scripts/poll.js` (Node, GitHub Actions; reads `process.env`) and
-  `worker/index.js` (draft Cloudflare Worker on a Cron Trigger; reads `env`, see
-  `worker/README.md`). `poller.js` must stay free of Node-only APIs (no
-  `process`, no `node:` imports, no `Date.now()` at module scope — workerd
-  returns 0 there) so it runs unchanged in both. It does all I/O — water temperature from the official `badetemperaturer.yr.no`
+  `runPoll(config)`; `scripts/poll.js` is the thin entry point that reads the
+  secrets from `process.env` and calls it (GitHub Actions, the Raspberry Pi timer
+  in `pi/`, or by hand). Secrets and `fetch` are passed in, so
+  `test/poller.test.js` runs whole polls against a fake fetch. It does all I/O — water temperature from the official `badetemperaturer.yr.no`
   API (`apikey` header), air/wind from MET Norway Locationforecast 2.0
   (`User-Agent` header), then POSTs the water-anchored rows to Supabase. `lib.js`
   is pure: `extractOfficialWaters` canonicalises every returned water reading,
@@ -136,10 +133,10 @@ Two halves share pure helpers but never import each other:
   flat persistence at every horizon; dropping the term restored +4-5% skill at
   6-12h with near-zero bias. Relaxation toward air is self-correcting — a second
   unconstrained term is not. Re-run that validation before adding one back.
-  **CPU budget:** the Worker's Free plan allows 10 ms CPU per cron run, and the
-  projection is the only heavy step. `backtestError` uses binary search over the
-  (sorted) history for that reason — a linear scan made it quadratic (~60 ms on a
-  30-day window, ~6 ms now). Keep new model work roughly linear in history size.
+  **Keep it near-linear:** the projection is the only CPU-heavy step of a poll.
+  `backtestError` binary-searches the (sorted) history — a linear scan made it
+  quadratic (~60 ms on a 30-day window, ~6 ms now). Keep new model work roughly
+  linear in history size.
   `poller.js` upserts one row into the `forecast` table
   (replace-on-write, keyed by `location_id`) and appends an hourly snapshot to
   `forecast_archive` (`archiveForecast`). The archive exists because `INFLATE`
@@ -186,12 +183,12 @@ single row per location, replaced each poll via `Prefer: resolution=merge-duplic
 
 ### Scheduling reality
 
-(Two alternatives run the same `runPoll` and would retire cron-job.org and its
-PAT: `pi/` — a systemd timer on a Raspberry Pi running `scripts/poll.js`, no CPU
-limit, see `pi/README.md` — and `worker/`, a Cloudflare Worker on a Cron Trigger,
-which measured 22 ms CPU per run against the Free plan's 10 ms. Every write is
-idempotent, so several pollers can overlap during a switch-over. Until one is
-switched over, the paragraph below is how polling actually runs.)
+(Alternative: `pi/` runs the same `scripts/poll.js` from a systemd timer on a
+Raspberry Pi — no CPU limit, no Actions minutes, see `pi/README.md`. Every write
+is idempotent, so it can overlap the Actions poll during a switch-over. Until
+cron-job.org is switched off, the paragraph below is how the Actions poll runs.
+A Cloudflare Worker was tried and dropped: it measured 22 ms CPU per run against
+the Free plan's 10 ms.)
 
 The poll workflow has **no `schedule:` cron** — it is triggered solely by an
 external scheduler (e.g. cron-job.org) hitting the `workflow_dispatch` REST

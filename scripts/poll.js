@@ -1,6 +1,5 @@
-// Node entry point for the poll (GitHub Actions, or by hand). Reads the secrets
-// from the environment and runs the shared poll in ./poller.js; the Cloudflare
-// Worker in worker/index.js runs the very same function from its Cron Trigger.
+// Node entry point for the poll (GitHub Actions, the Raspberry Pi timer in pi/,
+// or by hand). Reads the secrets from the environment and runs ./poller.js.
 import { runPoll } from "./poller.js";
 
 runPoll({
