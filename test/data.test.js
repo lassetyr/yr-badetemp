@@ -21,7 +21,7 @@ import {
 const BASE = "https://proj.supabase.co";
 
 test("readingsQueryUrl targets the readings endpoint, filters by location, orders newest-first", () => {
-  const url = new URL(readingsQueryUrl(BASE, "0-10238", "all", 1000));
+  const url = new URL(readingsQueryUrl(BASE, "0-10238", "90d", 1000));
   assert.equal(url.origin + url.pathname, `${BASE}/rest/v1/readings`);
   assert.equal(url.searchParams.get("location_id"), "eq.0-10238");
   // Newest-first so a future row cap would drop the oldest rows, not the tail.
@@ -30,11 +30,6 @@ test("readingsQueryUrl targets the readings endpoint, filters by location, order
     url.searchParams.get("select"),
     "time,epoch,water,air,wind_speed,wind_gust,wind_dir",
   );
-});
-
-test("readingsQueryUrl 'all' omits the epoch lower bound", () => {
-  const url = new URL(readingsQueryUrl(BASE, "0-10238", "all", 1000));
-  assert.equal(url.searchParams.get("epoch"), null);
 });
 
 test("readingsQueryUrl unknown range omits the epoch lower bound", () => {
@@ -56,14 +51,20 @@ test("readingsQueryUrl '7d' and '30d' use correct windows", () => {
   assert.equal(u30.searchParams.get("epoch"), `gte.${now - 30 * 24 * 3600}`);
 });
 
+test("readingsQueryUrl '90d' bounds the read to 90 days (no unbounded range exists)", () => {
+  const now = 100 * 24 * 3600;
+  const url = new URL(readingsQueryUrl(BASE, "0-10238", "90d", now));
+  assert.equal(url.searchParams.get("epoch"), `gte.${now - 90 * 24 * 3600}`);
+});
+
 test("readingsQueryUrl omits limit/offset when no page is requested", () => {
-  const url = new URL(readingsQueryUrl(BASE, "0-10238", "all", 1000));
+  const url = new URL(readingsQueryUrl(BASE, "0-10238", "90d", 1000));
   assert.equal(url.searchParams.get("limit"), null);
   assert.equal(url.searchParams.get("offset"), null);
 });
 
 test("readingsQueryUrl sets limit/offset for a requested page", () => {
-  const url = new URL(readingsQueryUrl(BASE, "0-10238", "all", 1000, { limit: 1000, offset: 2000 }));
+  const url = new URL(readingsQueryUrl(BASE, "0-10238", "90d", 1000, { limit: 1000, offset: 2000 }));
   assert.equal(url.searchParams.get("limit"), "1000");
   assert.equal(url.searchParams.get("offset"), "2000");
 });
@@ -77,7 +78,7 @@ test("readingsQueryUrl page params coexist with the range's epoch bound", () => 
 });
 
 test("readingsQueryUrl omits offset 0 but keeps the limit", () => {
-  const url = new URL(readingsQueryUrl(BASE, "0-10238", "all", 1000, { limit: 1000, offset: 0 }));
+  const url = new URL(readingsQueryUrl(BASE, "0-10238", "90d", 1000, { limit: 1000, offset: 0 }));
   assert.equal(url.searchParams.get("limit"), "1000");
   assert.equal(url.searchParams.get("offset"), null);
 });
@@ -112,9 +113,12 @@ test("rangeBounds '7d' and '30d' use correct windows", () => {
   });
 });
 
-test("rangeBounds 'all' leaves min undefined, max pinned to now", () => {
-  const now = 1_000_000;
-  assert.deepEqual(rangeBounds("all", now), { min: undefined, max: now * 1000 });
+test("rangeBounds '90d' spans now-90d to now", () => {
+  const now = 100 * 24 * 3600;
+  assert.deepEqual(rangeBounds("90d", now), {
+    min: (now - 90 * 24 * 3600) * 1000,
+    max: now * 1000,
+  });
 });
 
 test("rangeBounds unknown range leaves min undefined", () => {
@@ -480,7 +484,7 @@ test("forecastHorizonFor caps the drawn projection at 24h on the wide ranges", (
   // line stops where it stops claiming something. The poller still stores 48h.
   assert.equal(forecastHorizonFor("7d"), 24);
   assert.equal(forecastHorizonFor("30d"), 24);
-  assert.equal(forecastHorizonFor("all"), 24);
+  assert.equal(forecastHorizonFor("90d"), 24);
 });
 
 test("forecastHorizonFor keeps 24t at 12h so observations keep their share of the chart", () => {

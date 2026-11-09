@@ -4,11 +4,12 @@ const RANGE_SECONDS = {
   "24h": 24 * 3600,
   "7d": 7 * 24 * 3600,
   "30d": 30 * 24 * 3600,
+  "90d": 90 * 24 * 3600,
 };
 
 // Axis bounds in milliseconds for the selected range. The right edge is always
 // pinned to now so a stale feed shows an empty gap up to the current time. For
-// "all" (or an unknown key) the left edge is left to ECharts (undefined).
+// an unknown key the left edge is left to ECharts (undefined).
 export function rangeBounds(rangeKey, nowEpoch) {
   const max = nowEpoch * 1000;
   if (rangeKey in RANGE_SECONDS) {
@@ -20,7 +21,7 @@ export function rangeBounds(rangeKey, nowEpoch) {
 const COLUMNS = "time,epoch,water,air,wind_speed,wind_gust,wind_dir";
 
 // Build a PostgREST query URL for one location and time range. baseUrl is the
-// Supabase project URL with no trailing slash. Unknown/"all" ranges omit the
+// Supabase project URL with no trailing slash. Unknown ranges omit the
 // epoch lower bound (return the full history). Ordered newest-first
 // (epoch.desc) so that a truncated read drops the OLDEST rows, never the recent
 // tail — callers reverse to oldest-first for display.
@@ -198,7 +199,7 @@ export function mapForecast(payload) {
 // 24h, so the dashed line stops where it stops claiming anything. 24t is capped
 // tighter still, keeping the forecast to roughly half the observed window so the
 // measurements are not crowded out.
-const FORECAST_HORIZON_H = { "24h": 12, "7d": 24, "30d": 24, "all": 24 };
+const FORECAST_HORIZON_H = { "24h": 12, "7d": 24, "30d": 24, "90d": 24 };
 const DEFAULT_FORECAST_HORIZON_H = 24;
 
 export function forecastHorizonFor(rangeKey) {

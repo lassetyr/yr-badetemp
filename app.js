@@ -19,7 +19,7 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./src/config.js";
 const LOCATION_ID = "0-10238"; // Dulpen, Holmestrand
 const REFRESH_MS = 5 * 60 * 1000;
 const chart = echarts.init(document.getElementById("chart"));
-const RANGES = ["24h", "7d", "30d", "all"];
+const RANGES = ["24h", "7d", "30d", "90d"];
 
 // UI thresholds (policy lives here; src/data.js stays free of it).
 const STALE_THRESHOLD_SEC = 2 * 3600; // header "utdatert" badge
@@ -281,7 +281,7 @@ function buildOption(readings, forecast, rangeKey, nowEpochSec) {
     xAxis: {
       type: "time",
       // Right edge pinned to now; left edge spans the selected range (undefined
-      // for "all", letting ECharts fit the earliest reading).
+      // for an unknown range, letting ECharts fit the earliest reading).
       min: bounds.min,
       max: axisMax,
       axisLabel: {
@@ -471,7 +471,7 @@ const SUPABASE_HEADERS = {
 };
 
 // PostgREST truncates an unpaged read at 1000 rows without signalling it, so
-// long ranges ("30d", "Alle") must be paged or they silently show only the most
+// long ranges ("30d", "90d") must be paged or they silently show only the most
 // recent ~1000 readings. Mirrors `fetchHistory` in scripts/poll.js.
 const PAGE_SIZE = 1000;
 const MAX_PAGES = 20; // safety cap (20k rows ≫ any range we render)
