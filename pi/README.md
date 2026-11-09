@@ -52,8 +52,11 @@ Run one poll now to check the secrets:
 
 ```bash
 systemctl --user start yr-badetemp-poll.service
-journalctl --user -u yr-badetemp-poll -n 20 --no-pager
+journalctl --user-unit yr-badetemp-poll -n 20 --no-pager
 ```
+
+(`--user-unit` rather than `journalctl --user`: Raspberry Pi OS keeps the journal
+in memory, so there are no per-user journal files and `--user` finds nothing.)
 
 Expect `Fetched 5 reading(s), inserted N new; ...` and `Projection updated: ...`.
 A `401` means one of the keys is wrong.
@@ -62,7 +65,7 @@ A `401` means one of the keys is wrong.
 
 ```bash
 systemctl --user list-timers yr-badetemp-poll.timer        # next and last run
-journalctl --user -u yr-badetemp-poll --since today        # logs
+journalctl --user-unit yr-badetemp-poll --since today     # logs
 cd ~/yr-badetemp && git pull                               # pick up code changes (next run uses them)
 ```
 
