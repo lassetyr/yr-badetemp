@@ -1,0 +1,15 @@
+# One poll run. Started by yr-badetemp-poll.timer; see pi/README.md.
+# A systemd *user* unit: %h is the home directory of the user running it.
+[Unit]
+Description=Poll Dulpen water temperature into Supabase
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/yr-badetemp
+# KEY=value lines for YR_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY (chmod 600).
+EnvironmentFile=%h/.config/yr-badetemp/env
+ExecStart=/usr/bin/node scripts/poll.js
+# Same hard cap as the old Actions step: a hung poll can never overlap the next one.
+TimeoutStartSec=4min

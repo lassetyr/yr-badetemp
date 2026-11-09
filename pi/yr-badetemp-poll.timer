@@ -1,0 +1,12 @@
+# Fires the poll every 20 minutes; see pi/README.md.
+[Unit]
+Description=Poll Dulpen water temperature every 20 minutes
+
+[Timer]
+OnCalendar=*:0/20
+# Catch up once after a reboot or power cut instead of waiting for the next slot.
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

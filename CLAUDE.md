@@ -186,9 +186,12 @@ single row per location, replaced each poll via `Prefer: resolution=merge-duplic
 
 ### Scheduling reality
 
-(A draft alternative lives in `worker/`: a Cloudflare Worker whose Cron Trigger
-runs the same `runPoll`, which would retire cron-job.org and its PAT. Until it is
-deployed and switched over, the paragraph below is how polling actually runs.)
+(Two alternatives run the same `runPoll` and would retire cron-job.org and its
+PAT: `pi/` — a systemd timer on a Raspberry Pi running `scripts/poll.js`, no CPU
+limit, see `pi/README.md` — and `worker/`, a Cloudflare Worker on a Cron Trigger,
+which measured 22 ms CPU per run against the Free plan's 10 ms. Every write is
+idempotent, so several pollers can overlap during a switch-over. Until one is
+switched over, the paragraph below is how polling actually runs.)
 
 The poll workflow has **no `schedule:` cron** — it is triggered solely by an
 external scheduler (e.g. cron-job.org) hitting the `workflow_dispatch` REST
