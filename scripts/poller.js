@@ -183,8 +183,8 @@ async function archiveForecast(cfg, payload, generatedAt) {
   }
 }
 
-// Fetch the recent reading history for the fit (oldest-first), mapped to the
-// camelCase shape the model helpers expect. Paginates so the fit sees the whole
+// Fetch the recent reading history for the projection (oldest-first), mapped to the
+// camelCase shape lib.js expects. Paginates so the band is measured over the whole
 // FIT_WINDOW_DAYS window rather than Supabase's default 1000-row read cap.
 // Returns [] on any failure.
 async function fetchHistory(cfg) {
@@ -210,8 +210,8 @@ async function fetchHistory(cfg) {
       rows.push(...batch);
       if (batch.length < PAGE) break; // last page reached
     }
-    // rows are newest-first (epoch.desc); reverse to oldest-first so the model
-    // fits over consecutive pairs and buildProjection seeds from the newest row.
+    // rows are newest-first (epoch.desc); reverse to oldest-first, the order
+    // persistenceError's binary search and buildProjection's seed expect.
     return rows
       .map((r) => ({ epoch: r.epoch, water: r.water, air: r.air, windSpeed: r.wind_speed, windDir: r.wind_dir }))
       .reverse();

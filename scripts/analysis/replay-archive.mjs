@@ -9,13 +9,19 @@
 //
 //   node scripts/analysis/replay-archive.mjs
 //
-// Variants are defined in VARIANTS below. "shipped" mirrors buildProjection in
-// scripts/lib.js and is checked against the archived projections first, so a
-// harness that drifts from the live model is caught before its numbers are read.
-import { HORIZON_H, MIN_GAP_S, MAX_GAP_S, MIN_PAIRS } from "../lib.js";
+// Skill is measured against flat persistence, which is what ships since
+// 2026-11-09 (see buildProjection in scripts/lib.js). A variant is worth shipping
+// only if it beats persistence on BOTH test sets. VARIANTS[0] is the relaxation
+// model that shipped until then; it is checked against the projections archived
+// while it was live, so a harness that drifts from it is caught first.
+import { HORIZON_H } from "../lib.js";
 import { loadArchive, loadReadings, lowerBound, nearestReading, seedAgeS, MAX_SEED_AGE_S } from "./archive-data.mjs";
 
 const HORIZONS = [6, 12, 24, 48];
+// Pair filter for the fit, as the retired fitRelaxation used it.
+const MIN_GAP_S = 300; // ignore consecutive pairs closer than 5 min
+const MAX_GAP_S = 5400; // ...or farther apart than 90 min (feed gaps)
+const MIN_PAIRS = 50; // min usable pairs before a fit is trusted
 const DAY = 86400;
 
 // Same semantics as lib.js smoothAirSeries (trailing mean over [t − window, t],
@@ -98,7 +104,7 @@ function project(history, driver, v) {
 }
 
 const VARIANTS = [
-  { name: "shipped (24h mean, 30d fit, no c)", smoothH: 24, fitDays: 30, intercept: false },
+  { name: "relaxation (shipped to 2026-11)", smoothH: 24, fitDays: 30, intercept: false },
   { name: "intercept c, 30d fit", smoothH: 24, fitDays: 30, intercept: true },
   { name: "intercept c, 14d fit", smoothH: 24, fitDays: 14, intercept: true },
   { name: "intercept c, 7d fit", smoothH: 24, fitDays: 7, intercept: true },
@@ -109,12 +115,15 @@ const VARIANTS = [
 
 const readings = (await loadReadings(0)).filter((r) => r.water != null);
 const archive = (await loadArchive()).filter((row) => row.payload?.points?.length && seedAgeS(row) <= MAX_SEED_AGE_S);
+// Snapshots the relaxation model produced (flat-persistence ones carry no coefficients).
+const relaxationEra = new Set(archive.filter((row) => row.payload.coeffs?.a != null));
 
 // --- test set 1: archived met.no forecasts --------------------------------------------
 const archiveCases = archive.map((row) => {
   const [seed, ...pts] = row.payload.points;
   const history = readings.slice(0, lowerBound(readings, seed.epoch + 1));
   return {
+    relaxation: relaxationEra.has(row),
     seed,
     history,
     driver: pts.map((p) => ({ epoch: p.epoch, air: p.air })),
@@ -123,10 +132,10 @@ const archiveCases = archive.map((row) => {
   };
 });
 
-// Sanity check: the shipped variant must reproduce what the live poller archived.
+// Sanity check: VARIANTS[0] must reproduce what the relaxation-era poller archived.
 {
   let n = 0, diff = 0, max = 0;
-  for (const c of archiveCases) {
+  for (const c of archiveCases.filter((c) => c.relaxation)) {
     const p = project(c.history, c.driver, VARIANTS[0]);
     for (const h of HORIZONS) {
       const got = p.at(h);

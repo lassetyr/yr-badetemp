@@ -2,17 +2,13 @@
 
 const num = (v) => (typeof v === "number" ? v : null);
 
-// --- Forecast model tunables ------------------------------------------------
-export const FIT_WINDOW_DAYS = 30;   // history window queried for the fit
-export const MIN_GAP_S = 300;        // ignore consecutive pairs closer than 5 min
-export const MAX_GAP_S = 5400;       // ...or farther apart than 90 min (feed gaps)
-export const MIN_PAIRS = 50;         // min usable pairs before the fit is trusted
+// --- Forecast tunables -------------------------------------------------------
+export const FIT_WINDOW_DAYS = 30;   // history window the band is measured over
 export const HORIZON_H = 48;         // projection horizon (hours)
-export const INFLATE = 1.35;         // band inflation for met.no forecast-input error
-export const BACKTEST_HORIZONS = [6, 12, 24, 48];
-export const BACKTEST_STRIDE = 6;    // subsample origins ~every 2h at 20-min cadence
-export const FALLBACK_ERR = 0.5;     // band half-width (°C) when backtest has no data
-export const SMOOTH_WINDOW_H = 24;   // trailing-mean window for the air driver
+export const BAND_QUANTILE = 0.8;    // band covers this share of past persistence errors
+export const BAND_HORIZONS = [6, 12, 24, 48];
+export const BAND_STRIDE = 6;        // subsample band origins (~hourly at 10-min cadence)
+export const FALLBACK_ERR = 0.5;     // band half-width (°C) when history cannot measure it
 
 // Canonicalise every official water reading in the response, oldest-first.
 // The endpoint serves the five most recent registrations for the location
@@ -68,9 +64,9 @@ export function buildRow(water, forecast, locationId) {
 
 // Pull the forward air/wind timeseries from a met.no Locationforecast 2.0
 // response, as ascending {epoch, air, windSpeed, windDir}. Entries without a numeric
-// air_temperature are skipped (they can't drive the relaxation model); windSpeed
+// air_temperature are skipped (the air forecast line is what they are for); windSpeed
 // and windDir fall back to null. Unlike extractForecast (which keeps only hour 0), this
-// returns every entry — the projection roll-forward bounds it to the horizon.
+// returns every entry — buildProjection bounds it to the horizon.
 export function extractForecastSeries(json) {
   const series = json?.properties?.timeseries;
   if (!Array.isArray(series)) return [];
@@ -86,27 +82,6 @@ export function extractForecastSeries(json) {
   return out;
 }
 
-// Replace each entry's `air` with the trailing mean of air over the preceding
-// `windowH` hours (inclusive of the entry itself), preserving every other field.
-// Only non-null airs contribute; an entry whose window holds no non-null air gets
-// air: null. Input must be epoch-ascending. This is the model's slow driver — it
-// removes the diurnal swing that water can't follow, so the fit isn't diluted.
-export function smoothAirSeries(series, windowH = SMOOTH_WINDOW_H) {
-  const windowS = windowH * 3600;
-  return series.map((entry, i) => {
-    const lo = entry.epoch - windowS;
-    let sum = 0;
-    let count = 0;
-    for (let j = i; j >= 0; j--) {
-      if (series[j].epoch < lo) break;
-      if (series[j].air == null) continue;
-      sum += series[j].air;
-      count += 1;
-    }
-    return { ...entry, air: count > 0 ? sum / count : null };
-  });
-}
-
 // Floor an epoch (seconds) to the top of its hour. Used as the archive's
 // primary key so the first poll of each hour inserts and the rest collide into
 // ignore-duplicate no-ops — the same idempotence trick the readings PK uses,
@@ -115,179 +90,69 @@ export function hourBucket(epochSec) {
   return Math.floor(epochSec / 3600) * 3600;
 }
 
-// Least-squares fit of dWater/dt = a*(air-water) over consecutive reading pairs.
-// Only pairs with a sane time gap and both predictors present contribute.
-// Returns {a,n,ok}; ok gates the caller into the persistence fallback when the
-// fit is untrustworthy or non-physical (a<=0).
-//
-// Single-parameter by design. An earlier version added a b*windSpeed term, but
-// wind speed is always positive while b fitted negative, so the term behaved as
-// a constant cooling with no feedback to correct it — it absorbed the fitting
-// window's mean drift and extrapolated it forever. Walk-forward validation over
-// 6213 readings (2026-09-07) measured -1.07 C of spurious drift at 48h and the
-// model losing to flat persistence at every horizon. Relaxation toward air is
-// self-correcting; a second unconstrained term is not. Do not re-add one without
-// re-running that validation.
-export function fitRelaxation(readings, opts = {}) {
-  const minGap = opts.minGapS ?? MIN_GAP_S;
-  const maxGap = opts.maxGapS ?? MAX_GAP_S;
-  const minPairs = opts.minPairs ?? MIN_PAIRS;
-  let sxx = 0;
-  let sxy = 0;
-  let n = 0;
-  for (let i = 0; i < readings.length - 1; i++) {
-    const r0 = readings[i];
-    const r1 = readings[i + 1];
-    const gap = r1.epoch - r0.epoch;
-    if (gap < minGap || gap > maxGap) continue;
-    if (r0.water == null || r1.water == null || r0.air == null) continue;
-    const dtH = gap / 3600;
-    const rate = (r1.water - r0.water) / dtH;
-    const x = r0.air - r0.water;
-    sxx += x * x;
-    sxy += x * rate;
-    n++;
-  }
-  if (n < minPairs || sxx < 1e-12) return { a: 0, n, ok: false };
-  const a = sxy / sxx;
-  const ok = Number.isFinite(a) && a > 0;
-  return { a: ok ? a : 0, n, ok };
-}
-
-// Integrate dWater/dt = a*(air-water) forward from `seed` along the forecast
-// timestamps (Euler step, variable dt). Because each step relaxes toward that
-// hour's forecast air, the trajectory self-corrects and stays stable. A zero
-// coefficient yields a flat line (persistence baseline).
-export function rollForward(seed, forecastSeries, coeffs, opts = {}) {
-  const horizonH = opts.horizonH ?? HORIZON_H;
-  const { a } = coeffs;
-  const cutoff = seed.epoch + horizonH * 3600;
-  let w = seed.water;
-  let tPrev = seed.epoch;
-  const out = [];
-  for (const f of forecastSeries) {
-    if (f.epoch <= seed.epoch) continue;
-    if (f.epoch > cutoff) break;
-    if (f.air == null) continue; // wind is not a driver, so its absence is fine
-    const dtH = (f.epoch - tPrev) / 3600;
-    if (dtH <= 0) continue;
-    w = w + dtH * a * (f.air - w);
-    out.push({ epoch: f.epoch, water: w });
-    tPrev = f.epoch;
-  }
-  return out;
-}
-
-// True when `arr` is epoch-ascending (ties allowed). One O(n) pass, so callers
-// can pick the binary-search path without assuming their input is sorted.
-function isEpochSorted(arr) {
-  for (let i = 1; i < arr.length; i++) if (arr[i].epoch < arr[i - 1].epoch) return false;
-  return true;
-}
-
-// Index of the first entry with epoch >= t (lowerBound) or epoch > t
-// (upperBound) in an epoch-ascending array; arr.length when there is none.
-function bound(arr, t, strict) {
+// Index of the first entry with epoch >= t in an epoch-ascending array;
+// arr.length when there is none.
+function lowerBound(arr, t) {
   let lo = 0;
   let hi = arr.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (strict ? arr[mid].epoch <= t : arr[mid].epoch < t) lo = mid + 1;
+    if (arr[mid].epoch < t) lo = mid + 1;
     else hi = mid;
   }
   return lo;
 }
-const lowerBound = (arr, t) => bound(arr, t, false);
-const upperBound = (arr, t) => bound(arr, t, true);
 
-// Nearest entry to `t` (seconds) within `tolS`, by |epoch - t|; on a tie the
-// earliest entry wins. `sorted` selects a binary search over an epoch-ascending
-// array. The linear scan is kept for unsorted input, and both paths return the
-// same entry: the scan keeps the first strict minimum, and the binary search
-// resolves to the first entry of the nearest epoch, preferring the earlier side.
-//
-// The binary search keeps the projection near-linear: backtestError calls this
-// ~3000 times against a ~4300-row 30-day history, and a linear scan made the
-// whole projection quadratic (~60 ms per poll instead of ~6 ms).
-function nearestByEpoch(arr, t, tolS, sorted = false) {
-  let best = null;
-  let bestGap = Infinity;
-  if (sorted) {
-    const i = lowerBound(arr, t); // arr[i] is the first entry at/after t
-    if (i > 0) {
-      // First entry of the run sharing arr[i-1]'s epoch (the scan's pick).
-      const j = lowerBound(arr, arr[i - 1].epoch);
-      best = arr[j];
-      bestGap = t - arr[j].epoch;
-    }
-    if (i < arr.length && arr[i].epoch - t < bestGap) {
-      best = arr[i];
-      bestGap = arr[i].epoch - t;
-    }
-  } else {
-    for (const e of arr) {
-      const gap = Math.abs(e.epoch - t);
-      if (gap < bestGap) {
-        bestGap = gap;
-        best = e;
-      }
-    }
-  }
-  return best && bestGap <= tolS ? best : null;
+// Nearest entry to `t` (seconds) within `tolS` in an epoch-ascending array; on
+// a tie the earlier entry wins. Binary search keeps persistenceError near-linear
+// in history size (the projection is the only CPU-heavy step of a poll).
+function nearestByEpoch(arr, t, tolS) {
+  const i = lowerBound(arr, t);
+  const before = i > 0 ? arr[i - 1] : null;
+  const after = i < arr.length ? arr[i] : null;
+  let best = before;
+  if (after && (!before || after.epoch - t < t - before.epoch)) best = after;
+  return best && Math.abs(best.epoch - t) <= tolS ? best : null;
 }
 
-// Walk-forward backtest: from strided origin readings, roll the fitted model
-// forward using the ACTUAL later readings as the air/wind driver, and compare
-// the projection against the real water reading nearest each horizon. Returns
-// mean absolute error per horizon (°C), or null where no samples exist. This
-// measures MODEL error only (perfect-input proxy); it does not see met.no's own
-// forecast error, so callers inflate the resulting band.
-export function backtestError(readings, coeffs, horizonsH = BACKTEST_HORIZONS, opts = {}) {
-  const stride = opts.stride ?? BACKTEST_STRIDE;
-  const tolS = opts.toleranceS ?? 3600;
-  const maxH = Math.max(...horizonsH);
-  const sum = {};
-  const count = {};
-  for (const h of horizonsH) {
-    sum[h] = 0;
-    count[h] = 0;
-  }
-  const sorted = isEpochSorted(readings);
-  for (let i = 0; i < readings.length; i += stride) {
-    const origin = readings[i];
-    if (origin.water == null) continue;
-    // rollForward stops at the first entry past the horizon, so on sorted input
-    // only the slice up to it matters; copying the whole tail per origin is what
-    // made this loop quadratic.
-    const cutoff = origin.epoch + maxH * 3600;
-    const end = sorted ? Math.max(i + 1, upperBound(readings, cutoff)) : readings.length;
-    const proj = rollForward(
-      { epoch: origin.epoch, water: origin.water },
-      readings.slice(i + 1, end),
-      coeffs,
-      { horizonH: maxH },
-    );
-    if (proj.length === 0) continue;
-    for (const h of horizonsH) {
-      const targetT = origin.epoch + h * 3600;
-      const pred = nearestByEpoch(proj, targetT, tolS, true); // rollForward output is strictly ascending
-      const actual = nearestByEpoch(readings, targetT, tolS, sorted);
-      if (pred == null || actual == null || actual.water == null) continue;
-      sum[h] += Math.abs(pred.water - actual.water);
-      count[h] += 1;
-    }
-  }
+// Value at fraction q of the sorted copy of `values`.
+function quantile(values, q) {
+  const s = [...values].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.floor(q * s.length))];
+}
+
+// How far the water actually moved over each horizon in `readings`: the `q`
+// quantile of |water(t + h) − water(t)| over strided origins t. This is exactly
+// the error a flat projection would have made, measured on real outcomes, so a
+// band of this half-width covers about `q` of them with no inflation factor.
+// Returns {h: °C | null}, null where no origin has a reading h hours later.
+export function persistenceError(readings, horizonsH = BAND_HORIZONS, q = BAND_QUANTILE, opts = {}) {
+  const stride = opts.stride ?? BAND_STRIDE;
+  const tolS = opts.toleranceS ?? 1800;
+  const sorted = readings.every((r, i) => i === 0 || readings[i - 1].epoch <= r.epoch)
+    ? readings
+    : [...readings].sort((a, b) => a.epoch - b.epoch);
   const out = {};
-  for (const h of horizonsH) out[h] = count[h] > 0 ? sum[h] / count[h] : null;
+  for (const h of horizonsH) {
+    const errors = [];
+    for (let i = 0; i < sorted.length; i += stride) {
+      const origin = sorted[i];
+      if (origin.water == null) continue;
+      const later = nearestByEpoch(sorted, origin.epoch + h * 3600, tolS);
+      if (later?.water == null) continue;
+      errors.push(Math.abs(later.water - origin.water));
+    }
+    out[h] = errors.length > 0 ? quantile(errors, q) : null;
+  }
   return out;
 }
 
 const round1 = (v) => Math.round(v * 10) / 10;
 
-// Linear-interpolate the per-horizon backtest error at hour h, clamped to the
+// Linear-interpolate the per-horizon band half-width at hour h, clamped to the
 // measured endpoints; falls back to FALLBACK_ERR when no horizon has samples.
 function interpError(err, h) {
-  const pts = BACKTEST_HORIZONS.filter((k) => err[k] != null).map((k) => [k, err[k]]);
+  const pts = BAND_HORIZONS.filter((k) => err[k] != null).map((k) => [k, err[k]]);
   if (pts.length === 0) return FALLBACK_ERR;
   if (h <= pts[0][0]) return pts[0][1];
   if (h >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
@@ -301,61 +166,54 @@ function interpError(err, h) {
   return pts[pts.length - 1][1];
 }
 
-// Assemble the stored forecast payload: fit the model (or fall back to flat
-// persistence), roll forward on the met.no forecast, and wrap each projected
-// point in an INFLATE-scaled backtest band. points[0] is the seed with a
-// zero-width band so the dashed line joins the solid line at "now".
+// Assemble the stored forecast payload: a FLAT water projection at the last
+// measured value, one point per met.no forecast step within the horizon, wrapped
+// in a band sized by persistenceError. points[0] is the seed with a zero-width
+// band so the dashed line joins the solid line at "now". Each point carries the
+// raw met.no air/wind, which the chart draws as the air and wind forecast lines.
+//
+// Why flat: the relaxation model it replaced (dWater/dt = a·(air − water)) lost
+// to persistence on the archived met.no forecasts (Sep–Nov 2026). Water does not
+// settle at air temperature but at a seasonal offset from it (−1.9 °C in June,
+// +3.8 °C in November) because the fjord lags the season. Fitting that offset
+// removed the bias but made every horizon worse, and no variant replayed by
+// scripts/analysis/replay-archive.mjs beat a flat line on both test sets. Prove
+// a new model there before adding one back.
 export function buildProjection(history, forecastSeries, opts = {}) {
   const horizonH = opts.horizonH ?? HORIZON_H;
-  const windowH = opts.smoothWindowH ?? SMOOTH_WINDOW_H;
-  const seed = history[history.length - 1];
-  // Fit and backtest on a history whose air is the trailing-mean driver, so the
-  // coupling reflects the slow signal water actually follows (not the diurnal wobble).
-  const smoothHist = smoothAirSeries(history, windowH);
-  const fit = fitRelaxation(smoothHist);
-  const coeffs = fit.ok ? { a: fit.a } : { a: 0 };
-  const err = backtestError(smoothHist, coeffs, BACKTEST_HORIZONS);
-  // Roll-forward driver: smooth air ACROSS THE SEAM so the first `windowH` hours
-  // of forecast average real observations rather than cold-starting. Concatenate
-  // the recent history tail with the forecast, smooth, then keep the forecast
-  // portion (its air is now the trailing mean; its wind stays the raw forecast wind).
-  const tail = history
-    .filter((r) => r.epoch > seed.epoch - windowH * 3600 && r.epoch <= seed.epoch)
-    .map((r) => ({ epoch: r.epoch, air: r.air, windSpeed: r.windSpeed }));
-  const combined = tail.concat(forecastSeries).sort((x, y) => x.epoch - y.epoch);
-  const smoothedForecast = smoothAirSeries(combined, windowH).filter((f) => f.epoch > seed.epoch);
-  const rolled = rollForward({ epoch: seed.epoch, water: seed.water }, smoothedForecast, coeffs, { horizonH });
-  // Displayed air/wind stay the RAW met.no forecast (smoothing is internal to the
-  // water model). Keyed by epoch to stamp each rolled point.
-  const weather = new Map(forecastSeries.map((f) => [f.epoch, f]));
+  const seed = history.reduce((a, b) => (b.epoch > a.epoch ? b : a));
+  const water = round1(seed.water);
+  const err = persistenceError(history, BAND_HORIZONS, BAND_QUANTILE);
   const points = [{
     epoch: seed.epoch,
-    water: round1(seed.water),
-    lower: round1(seed.water),
-    upper: round1(seed.water),
+    water,
+    lower: water,
+    upper: water,
     air: seed.air ?? null,
     windSpeed: seed.windSpeed ?? null,
     windDir: seed.windDir ?? null,
   }];
-  for (const p of rolled) {
-    const h = (p.epoch - seed.epoch) / 3600;
-    const e = INFLATE * interpError(err, h);
-    const w = weather.get(p.epoch);
+  const cutoff = seed.epoch + horizonH * 3600;
+  for (const f of forecastSeries) {
+    if (f.epoch <= seed.epoch) continue;
+    if (f.epoch > cutoff) break;
+    const e = interpError(err, (f.epoch - seed.epoch) / 3600);
     points.push({
-      epoch: p.epoch,
-      water: round1(p.water),
-      lower: round1(p.water - e),
-      upper: round1(p.water + e),
-      air: w?.air ?? null,
-      windSpeed: w?.windSpeed ?? null,
-      windDir: w?.windDir ?? null,
+      epoch: f.epoch,
+      water,
+      lower: round1(seed.water - e),
+      upper: round1(seed.water + e),
+      air: f.air ?? null,
+      windSpeed: f.windSpeed ?? null,
+      windDir: f.windDir ?? null,
     });
   }
   return {
     horizonH,
-    model: fit.ok ? "relaxation" : "persistence",
-    coeffs: fit.ok ? coeffs : null,
-    backtest: { mae6: err[6], mae12: err[12], mae24: err[24], mae48: err[48] },
+    model: "persistence",
+    coeffs: null,
+    bandQuantile: BAND_QUANTILE,
+    persistenceError: err,
     points,
   };
 }

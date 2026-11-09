@@ -479,9 +479,8 @@ test("clampForecast trims airLine and windLine to the horizon too", () => {
 });
 
 test("forecastHorizonFor caps the drawn projection at 24h on the wide ranges", () => {
-  // Walk-forward validation (2026-09-07) found the model beats flat persistence
-  // only out to ~12h and is indistinguishable from it past 24h, so the dashed
-  // line stops where it stops claiming something. The poller still stores 48h.
+  // The projection is flat with a widening band; past ~24h it says little worth
+  // the chart space. The poller still stores 48h.
   assert.equal(forecastHorizonFor("7d"), 24);
   assert.equal(forecastHorizonFor("30d"), 24);
   assert.equal(forecastHorizonFor("90d"), 24);

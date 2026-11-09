@@ -119,49 +119,48 @@ Two halves share pure helpers but never import each other:
   it.
 
 - **Forecast** (`scripts/poller.js:updateForecast` → `scripts/lib.js`): each poll
-  also builds a best-effort 48h water-temperature projection. `lib.js` fits a
-  single-parameter relaxation model `dWater/dt = a·(air−water)`
-  against a 24-hour trailing-mean air driver (`smoothAirSeries`, `SMOOTH_WINDOW_H`)
-  via `fitRelaxation`. `buildProjection` smooths that driver across the
-  history→forecast seam so the early forecast averages real observations rather
-  than cold-starting, then rolls the projection
-  forward on the met.no forecast timeseries (`extractForecastSeries` → `rollForward`),
-  sizes a confidence band from a walk-forward backtest (`backtestError`, inflated by
-  `INFLATE=1.35` for forecast-input error), and assembles the payload (`buildProjection`).
-  The air/wind lines shown to the user remain the raw met.no forecast (smoothing is
-  internal to the water model). **Wind is charted but does not drive the model.**
-  A `b·wind` term was removed 2026-09-07: wind speed is always positive while `b`
-  fitted negative, so it acted as constant cooling with no feedback, absorbing the
-  fitting window's mean drift and extrapolating it. Walk-forward validation over
-  6213 readings measured −1.07 °C of spurious drift at 48h and the model losing to
-  flat persistence at every horizon; dropping the term restored +4-5% skill at
-  6-12h with near-zero bias. Relaxation toward air is self-correcting — a second
-  unconstrained term is not. Re-run that validation before adding one back.
-  **Keep it near-linear:** the projection is the only CPU-heavy step of a poll.
-  `backtestError` binary-searches the (sorted) history — a linear scan made it
-  quadratic (~60 ms on a 30-day window, ~6 ms now). Keep new model work roughly
-  linear in history size.
-  `poller.js` upserts one row into the `forecast` table
-  (replace-on-write, keyed by `location_id`) and appends an hourly snapshot to
-  `forecast_archive` (`archiveForecast`). The archive exists because `INFLATE`
-  cannot otherwise be calibrated: scoring a past projection needs a record of
-  what we predicted, and the single-row `forecast` table keeps none. Its key is
+  also builds a 48h projection, and **it is deliberately flat**: `buildProjection`
+  holds the last measured water temperature for every met.no forecast step
+  (`extractForecastSeries`) and wraps it in a band whose half-width at each
+  horizon is the 0.8 quantile of how far the water actually moved over that many
+  hours in the last `FIT_WINDOW_DAYS` (`persistenceError`, `BAND_QUANTILE`). That
+  band is measured on real outcomes, so it needs no inflation factor; a trailing
+  30-day quantile covered 81–85% of later outcomes it had not seen. Each point
+  also carries the raw met.no air/wind, which the chart draws as the air and wind
+  forecast lines.
+
+  **Why flat (2026-11-09):** the relaxation model it replaced
+  (`dWater/dt = a·(air−water)` on a 24h mean-air driver) lost to persistence on
+  the archived met.no forecasts at every horizon, with a cold bias growing to
+  −0.5 °C at 48h. Root cause: water does not settle at air temperature but at a
+  seasonal offset from it (−1.9 °C in June, +3.8 °C in November) because the
+  fjord lags the season. Fitting that offset removed the bias but made every
+  horizon worse, and none of six variants beat a flat line on both test sets.
+  **Do not ship a model again without beating persistence in
+  `scripts/analysis/replay-archive.mjs` on both its test sets.** Keep projection
+  work near-linear in history size: it is the only CPU-heavy step of a poll
+  (`persistenceError` binary-searches, ~1 ms on a 30-day window).
+
+  `poller.js` upserts one row into the `forecast` table (replace-on-write,
+  keyed by `location_id`) and appends an hourly snapshot to `forecast_archive`
+  (`archiveForecast`). The archive is what made the model above measurable, since
+  the single-row `forecast` table keeps no history, and it keeps paying off:
+  every snapshot stores the met.no air forecast beside our projection, so
+  `replay-archive.mjs` can score any future model on the inputs it would really
+  have had, and `score-archive.mjs` checks the band's coverage. Its key is
   `(location_id, hour_epoch)` where `hour_epoch` is `hourBucket(generated_at)`,
   so the first poll of each hour inserts and the rest are ignore-duplicate
-  no-ops — ~24 rows/day, no state in the poller. Nothing reads it yet; it is
-  accumulating for a calibration that needs a few weeks of data. The browser reads it via
-  `forecastQueryUrl`/`mapForecast` (`src/data.js`) and draws a dashed line + shaded
-  band. When the fit is untrustworthy it falls back to flat persistence
-  (`model: "persistence"`).
+  no-ops — ~24 rows/day, no state in the poller. The browser reads the forecast
+  via `forecastQueryUrl`/`mapForecast` (`src/data.js`) and draws a dashed line +
+  shaded band.
 
   **Stored horizon and drawn horizon differ on purpose.** The poller always
   stores the full `HORIZON_H` (48h); `forecastHorizonFor` (`src/data.js`) caps
   what the chart draws — 12h on the 24t range, 24h everywhere else — and
-  `clampForecast` trims every forecast series to it. The 24h cap is the
-  validation result, not taste: past ~24h the projection is statistically
-  indistinguishable from a flat line, so the dashed line stops where it stops
-  claiming anything. The extra stored hours are kept because they cost nothing
-  and are the only record available for re-validating the model later.
+  `clampForecast` trims every forecast series to it. Past ~24h the band is wide
+  enough to say little, and the met.no air forecast it sits beside gets weaker
+  too. The extra stored hours are kept because they cost nothing and are part
+  of the archive's record for scoring future models.
 
 `lib.js` and `src/data.js` are deliberately I/O-free so the tests can exercise
 logic without network or DOM. When adding logic, put the pure part in those
@@ -223,16 +222,15 @@ entirely in the external scheduler's configuration.
   endpoint URLs and `MET_USER_AGENT` are constants in `scripts/poller.js`.
 - Secrets: `YR_API_KEY` (official water API; **required**), plus `SUPABASE_URL` /
   `SUPABASE_SERVICE_KEY`.
-- Forecast model tunables (constants in `scripts/lib.js`): `FIT_WINDOW_DAYS`,
-  `MIN_GAP_S`/`MAX_GAP_S`, `MIN_PAIRS`, `HORIZON_H`, `SMOOTH_WINDOW_H`, `INFLATE`,
-  `BACKTEST_HORIZONS`/`BACKTEST_STRIDE`, `FALLBACK_ERR`.
+- Forecast tunables (constants in `scripts/lib.js`): `FIT_WINDOW_DAYS` (history
+  the band is measured over), `HORIZON_H`, `BAND_QUANTILE`,
+  `BAND_HORIZONS`/`BAND_STRIDE`, `FALLBACK_ERR`.
 - Browser refresh cadence: `REFRESH_MS` in `app.js` (auto-refetches without page
   reload; pauses while the tab is hidden).
 - Poll cadence: configured in the external scheduler (cron-job.org) that hits
   `workflow_dispatch`; the workflow itself has no `schedule:` cron. Since each
   poll inserts the five most recent readings, anything up to ~40 min is lossless
   — the interval controls how fresh the page looks, not how complete the data is.
-  Beyond ~90 min (`MAX_GAP_S`) consecutive pairs stop counting toward the fit.
 
 ## Design docs
 

@@ -1,16 +1,16 @@
 // Score the archived projections in forecast_archive against what the sensor
-// actually measured. Unlike backtestError (which drives the model with observed
+// actually measured. Unlike an in-sample backtest (which drives a model with observed
 // air), this scores the forecasts as shipped, driven by the real met.no forecast.
 //
 //   node scripts/analysis/score-archive.mjs
 //
 // Prints three tables:
 //   1. per horizon: MAE, bias, flat-persistence MAE, skill, band coverage, the
-//      INFLATE that would hit 50/68/80/90% coverage, and met.no air MAE
+//      factor the band would need to hit 50/68/80/90% coverage, and met.no air MAE
 //   2. per month at 12h/24h: model vs persistence bias, met.no air bias, and the
 //      actual water change, separating model error from forecast-input error
-//   3. per week: the fitted coupling `a` and the in-sample backtest MAE at 24h
-import { INFLATE } from "../lib.js";
+//   3. per week: which model was live, its fitted coupling `a` (relaxation era
+//      only), and the band half-width it drew at 24h
 import { loadArchive, loadReadings, nearestReading, quantile, seedAgeS, MAX_SEED_AGE_S } from "./archive-data.mjs";
 
 const archive = await loadArchive();
@@ -53,8 +53,8 @@ for (const row of usable) {
     s.bias += err;
     s.pae += Math.abs(seed.water - obs.water);
     if (Math.abs(err) <= half + 1e-9) s.cov++;
-    // |err| in units of the raw (uninflated) backtest MAE: the INFLATE that would just cover it.
-    if (half > 0) s.ratios.push(Math.abs(err) / (half / INFLATE));
+    // |err| in units of the drawn half-width: the band scale that would just cover it.
+    if (half > 0) s.ratios.push(Math.abs(err) / half);
     if (p.air != null && obs.air != null) {
       s.airAe += Math.abs(p.air - obs.air);
       s.airN++;
@@ -64,8 +64,8 @@ for (const row of usable) {
 }
 const f2 = (v) => v.toFixed(2);
 const sgn = (v) => (v >= 0 ? "+" : "") + v.toFixed(2);
-console.log(`Per horizon (°C). Band coverage at INFLATE=${INFLATE}; skill = 1 − MAE/persistence MAE.`);
-console.log("h    n      days  MAE    bias   pers   skill  cover  INFLATE@50/68/80/90%      metAirMAE");
+console.log("Per horizon (°C). Coverage of the band as drawn; skill = 1 − MAE/persistence MAE.");
+console.log("h    n      days  MAE    bias   pers   skill  cover  band scale@50/68/80/90%   metAirMAE");
 for (const b of BUCKETS) {
   const s = byH[b];
   if (!s.n) continue;
@@ -133,11 +133,18 @@ for (const row of archive) {
   const monday = new Date(d - ((d.getUTCDay() + 6) % 7) * 864e5).toISOString().slice(0, 10);
   (byWeek[monday] ??= []).push(row.payload);
 }
-console.log("\nPer week: fitted coupling a (1/h) and in-sample backtest MAE at 24h");
-console.log("week of     n    mean a     backtest mae24");
+console.log("\nPer week: live model, fitted coupling a (1/h), band half-width at 24h (°C)");
+console.log("week of     n    model         mean a     band24");
 const mean = (xs) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : NaN);
 for (const [w, ps] of Object.entries(byWeek)) {
+  const models = [...new Set(ps.map((p) => p.model))].join("+");
   const a = mean(ps.map((p) => p.coeffs?.a).filter((x) => x != null));
-  const m = mean(ps.map((p) => p.backtest?.mae24).filter((x) => x != null));
-  console.log(`${w}  ${String(ps.length).padEnd(4)} ${a.toExponential(2).padStart(9)}  ${f2(m).padStart(10)}`);
+  const band24 = mean(
+    ps.map((p) => p.points.find((pt) => Math.abs(pt.epoch - p.points[0].epoch - 24 * 3600) <= 1800))
+      .filter(Boolean)
+      .map((pt) => (pt.upper - pt.lower) / 2),
+  );
+  console.log(
+    `${w}  ${String(ps.length).padEnd(4)} ${models.padEnd(13)} ${Number.isNaN(a) ? "-".padStart(9) : a.toExponential(2).padStart(9)}  ${(Number.isNaN(band24) ? "-" : f2(band24)).padStart(6)}`,
+  );
 }

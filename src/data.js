@@ -194,9 +194,9 @@ export function mapForecast(payload) {
 // Hours of projection to DRAW for a given range key. The poller always stores
 // the full HORIZON_H (48h); this caps only the display.
 //
-// 24h everywhere except the 24t view: walk-forward validation (2026-09-07)
-// showed the model beating flat persistence out to ~12h and matching it past
-// 24h, so the dashed line stops where it stops claiming anything. 24t is capped
+// 24h everywhere except the 24t view: the projection is a flat line whose band
+// keeps widening, and past ~24h it (and the met.no air forecast beside it) says
+// little worth the chart space. 24t is capped
 // tighter still, keeping the forecast to roughly half the observed window so the
 // measurements are not crowded out.
 const FORECAST_HORIZON_H = { "24h": 12, "7d": 24, "30d": 24, "90d": 24 };
