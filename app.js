@@ -401,7 +401,9 @@ function updateStats() {
 
 function updateHeader() {
   if (!latest) return;
-  document.getElementById("current-temp").textContent = `${latest.water}°C`;
+  // nf1, not a bare template: the raw number renders "6.5" while the rest of
+  // the page (stats, tooltip, trend) uses the Norwegian comma.
+  document.getElementById("current-temp").textContent = `${nf1.format(latest.water)}°C`;
   const p = osloParts(latest.time, {
     day: "2-digit",
     month: "2-digit",
