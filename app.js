@@ -55,6 +55,19 @@ function loadRange() {
   }
 }
 
+// Whether the forecast lines/band are drawn, persisted across reloads. Hiding it
+// also drops the axis extension into the future, giving the history the space.
+const FORECAST_KEY = "yr-badetemp:showForecast";
+let showForecast = loadShowForecast();
+
+function loadShowForecast() {
+  try {
+    return localStorage.getItem(FORECAST_KEY) !== "false"; // default: shown
+  } catch {
+    return true;
+  }
+}
+
 const nowEpoch = () => Math.floor(Date.now() / 1000);
 
 // "+0,4" / "-1,0" — Norwegian comma, explicit sign, one decimal.
@@ -361,7 +374,10 @@ function render() {
     return;
   }
   empty.hidden = true;
-  chart.setOption(buildOption(allReadings, forecast, currentRange, nowEpoch()), true);
+  chart.setOption(
+    buildOption(allReadings, showForecast ? forecast : null, currentRange, nowEpoch()),
+    true,
+  );
   updateTrend();
   updateStats();
 }
@@ -444,6 +460,19 @@ function wireButtons() {
     }
   });
   syncRangeButtons();
+
+  const fcBtn = document.getElementById("forecast-toggle");
+  fcBtn.setAttribute("aria-pressed", String(showForecast));
+  fcBtn.addEventListener("click", () => {
+    showForecast = !showForecast;
+    fcBtn.setAttribute("aria-pressed", String(showForecast));
+    try {
+      localStorage.setItem(FORECAST_KEY, String(showForecast));
+    } catch {
+      // ignore storage failures (private mode, quota)
+    }
+    render();
+  });
 }
 
 // Mark the button matching the persisted range as active (the HTML defaults to

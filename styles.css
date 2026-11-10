@@ -33,12 +33,20 @@ body {
 .current .temp { font-size: 2.4rem; font-weight: 700; color: var(--accent); }
 .current .as-of { display: block; color: var(--muted); font-size: 0.8rem; }
 
+/* Range picker + forecast toggle share one row. */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0;
+}
+
 /* Segmented control: one connected track, equal-width segments, filled active.
-   Auto width on desktop; stretched full-width on mobile (see media query). */
+   Auto width on desktop; stretched to fill the row on mobile (see media query). */
 .ranges {
   display: inline-flex;
   gap: 2px;
-  margin: 20px 0;
   padding: 3px;
   background: var(--panel);
   border-radius: 999px;
@@ -61,6 +69,27 @@ body {
   color: #0b1220;
   font-weight: 600;
 }
+
+/* On/off pill for the forecast lines: muted when off, accent ring + dot when on. */
+.toggle {
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 9px 16px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.toggle::before { content: "○ "; }
+
+.toggle[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.toggle[aria-pressed="true"]::before { content: "● "; color: var(--accent); }
 
 .chart {
   width: 100%;
@@ -102,7 +131,7 @@ body {
   /* Fill the tall phone viewport instead of leaving dead space below. */
   .chart { height: 60vh; }
   /* Segmented control spans the full width, one row. */
-  .ranges { display: flex; }
+  .ranges { display: flex; flex: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
